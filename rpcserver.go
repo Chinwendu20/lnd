@@ -3466,17 +3466,39 @@ func (r *rpcServer) fetchPendingForceCloseChannels() (pendingForceClose,
 		pub := pendingClose.RemotePub.SerializeCompressed()
 		chanPoint := pendingClose.ChanPoint
 
+		localFCInfo := pendingClose.LocalFCInfo
+		var lnrpcLocalForceCloseInfo *lnrpc.LocalForceCloseInfo
+		if localFCInfo != nil {
+			htlcActions := make(map[string]*lnrpc.ListHTLCHash)
+			for action, htlcs := range localFCInfo.HtlcActions {
+				htlcHashes := make([][]byte, len(htlcs))
+				for i, htlc := range htlcs {
+					htlcHashes[i] = htlc.RHash[:]
+				}
+				htlcHashList := &lnrpc.ListHTLCHash{
+					Hash: htlcHashes,
+				}
+				htlcActions[action] = htlcHashList
+			}
+
+			lnrpcLocalForceCloseInfo = &lnrpc.LocalForceCloseInfo{
+				UserInitiated:    localFCInfo.UserInitiated,
+				LinkFailureError: localFCInfo.LinkFailureError,
+				HtlcActions:      htlcActions,
+			}
+		}
 		// Create the pending channel. If this channel was closed before
 		// we started storing historical channel data, we will not know
 		// who initiated the channel, so we set the initiator field to
 		// unknown.
 		channel := &lnrpc.PendingChannelsResponse_PendingChannel{
-			RemoteNodePub:  hex.EncodeToString(pub),
-			ChannelPoint:   chanPoint.String(),
-			Capacity:       int64(pendingClose.Capacity),
-			LocalBalance:   int64(pendingClose.SettledBalance),
-			CommitmentType: lnrpc.CommitmentType_UNKNOWN_COMMITMENT_TYPE,
-			Initiator:      lnrpc.Initiator_INITIATOR_UNKNOWN,
+			RemoteNodePub:       hex.EncodeToString(pub),
+			ChannelPoint:        chanPoint.String(),
+			Capacity:            int64(pendingClose.Capacity),
+			LocalBalance:        int64(pendingClose.SettledBalance),
+			CommitmentType:      lnrpc.CommitmentType_UNKNOWN_COMMITMENT_TYPE,
+			Initiator:           lnrpc.Initiator_INITIATOR_UNKNOWN,
+			LocalForceCloseInfo: lnrpcLocalForceCloseInfo,
 		}
 
 		// Lookup the channel in the historical channel bucket to obtain
@@ -3744,7 +3766,6 @@ func (r *rpcServer) fetchWaitingCloseChannels() (waitingCloseChannels,
 func (r *rpcServer) PendingChannels(ctx context.Context,
 	in *lnrpc.PendingChannelsRequest) (
 	*lnrpc.PendingChannelsResponse, error) {
-
 	resp := &lnrpc.PendingChannelsResponse{}
 
 	// First, we find all the channels that will soon be opened.
@@ -4495,11 +4516,13 @@ func (r *rpcServer) createRPCClosedChannel(
 			}
 			htlcActions[action] = htlcHashList
 		}
-		channel.LocalForceCloseInfo = &lnrpc.LocalForceCloseInfo{
+
+		lnrpcLocalForceCloseInfo := lnrpc.LocalForceCloseInfo{
 			UserInitiated:    localFCInfo.UserInitiated,
 			LinkFailureError: localFCInfo.LinkFailureError,
 			HtlcActions:      htlcActions,
 		}
+		channel.LocalForceCloseInfo = &lnrpcLocalForceCloseInfo
 	}
 
 	return channel, nil

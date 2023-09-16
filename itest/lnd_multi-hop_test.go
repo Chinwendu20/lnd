@@ -266,6 +266,10 @@ func runMultiHopHtlcLocalTimeout(ht *lntest.HarnessTest,
 	// (Timeout and FailNow) populated.
 	closedChanReq := &lnrpc.ClosedChannelsRequest{Abandoned: false}
 	closedChans := bob.RPC.ClosedChannels(closedChanReq)
+	closedChanReq2 := &lnrpc.ClosedChannelsRequest{}
+	closedChans2 := bob.RPC.ClosedChannels(closedChanReq2)
+	fmt.Println("]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]")
+	fmt.Println(closedChans2.Channels)
 	localFCInfo := closedChans.Channels[0].LocalForceCloseInfo
 	require.Empty(ht, localFCInfo.LinkFailureError)
 	require.Equal(ht, false, localFCInfo.UserInitiated)

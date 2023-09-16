@@ -872,9 +872,7 @@ func (c *ChannelArbitrator) stateStep(
 		case chainTrigger:
 			// Ignore errors since logging force close info is not a
 			// critical part of the force close flow.
-			_ = c.log.LogLocalForceCloseInfo(localForceCloseInfo{
-				htlcActions: chainActions,
-			})
+			HtlcActionForceClose(chainActions)(c)
 			fallthrough
 		case userTrigger:
 			nextState = StateBroadcastCommit
@@ -2666,18 +2664,8 @@ func (c *ChannelArbitrator) channelAttendant(bestHeight int32) {
 
 			info, err := c.log.FetchLocalForceCloseInfo()
 			if info != nil && err == nil {
-				htlcMap := make(map[string][]channeldb.HTLC)
-				for action, htlcs := range info.htlcActions {
-					htlcMap[action.String()] = htlcs
-				}
-
-				dbLocalFCInfo := &channeldb.LocalForceCloseInfo{
-					UserInitiated:    info.userInitiated,
-					LinkFailureError: info.linkFailureError,
-					HtlcActions:      htlcMap,
-				}
 				closeInfo.ChannelCloseSummary.LocalFCInfo =
-					dbLocalFCInfo
+					info
 			}
 
 			err = c.cfg.MarkChannelClosed(

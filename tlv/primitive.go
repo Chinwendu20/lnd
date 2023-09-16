@@ -362,3 +362,27 @@ func SizeBigSize(val interface{}) SizeFunc {
 		return size
 	}
 }
+
+func EBool(w io.Writer, val interface{}, buf *[8]byte) error {
+	if i, ok := val.(*bool); ok {
+		if *i {
+			buf[0] = 1
+		} else {
+			buf[0] = 0
+		}
+		_, err := w.Write(buf[:1])
+		return err
+	}
+	return NewTypeForEncodingErr(val, "bool")
+}
+
+func DBool(r io.Reader, val interface{}, buf *[8]byte, l uint64) error {
+	if i, ok := val.(*bool); ok && l == 1 {
+		if _, err := io.ReadFull(r, buf[:1]); err != nil {
+			return err
+		}
+		*i = buf[0] != 0
+		return nil
+	}
+	return NewTypeForDecodingErr(val, "bool", l, 1)
+}

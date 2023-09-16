@@ -80,6 +80,7 @@ var (
 // TestLightningNetworkDaemon performs a series of integration tests amongst a
 // programmatically driven network of lnd nodes.
 func TestLightningNetworkDaemon(t *testing.T) {
+	fmt.Println("pppppppppppppppppppppp")
 	// If no tests are registered, then we can exit early.
 	if len(allTestCases) == 0 {
 		t.Skip("integration tests not selected with flag 'integration'")

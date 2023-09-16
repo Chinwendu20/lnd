@@ -53,28 +53,6 @@ func (c *ContractResolutions) IsEmpty() bool {
 		c.AnchorResolution == nil && c.BreachResolution == nil
 }
 
-// localForceCloseInfo encapsulates information that led to a channel being
-// force closed with the initiator being local. Currently local force closes
-// can be (1) purely user initiated, (2) automatic due to certain link errors,
-// or (3) automatic due to certain on-chain HTLC conditions. As such, only one
-// of the three fields in this struct will ever have meaningful information. But
-// this may be extended in the future. For example, we may decide to log HTLC
-// information that doesn't automatically result in a force close, but leaves
-// the channel in a state whereby the user has no option but to force close.
-type localForceCloseInfo struct {
-	// userInitiated is true iff the force close was specifically initiated
-	// by the user.
-	userInitiated bool
-
-	// linkFailureError is a non-empty string iff the force close was
-	// automatically initiated following from a link failure.
-	linkFailureError string
-
-	// htlcActions is a non-empty map iff the force close was automatically
-	// initiated by an on-chain trigger such as HTLC timeout.
-	htlcActions ChainActionMap
-}
-
 // ArbitratorLog is the primary source of persistent storage for the
 // ChannelArbitrator. The log stores the current state of the
 // ChannelArbitrator's internal state machine, any items that are required to
@@ -145,12 +123,12 @@ type ArbitratorLog interface {
 	// object within the ArbitratorLog for deferred consumption. This is
 	// typically invoked when the channel force closure is first initiated
 	// either by the user or automatically (link error, HTLC actions, etc.).
-	LogLocalForceCloseInfo(localForceCloseInfo) error
+	LogLocalForceCloseInfo(channeldb.LocalForceCloseInfo) error
 
 	// FetchLocalForceCloseInfo attempts to fetch the localForceCloseInfo
 	// object that was previously logged in the ArbitratorLog. We use this
 	// information when actually marking the channel as closed.
-	FetchLocalForceCloseInfo() (*localForceCloseInfo, error)
+	FetchLocalForceCloseInfo() (*channeldb.LocalForceCloseInfo, error)
 
 	// WipeHistory is to be called ONLY once *all* contracts have been
 	// fully resolved, and the channel closure if finalized. This method
@@ -1050,69 +1028,41 @@ func (b *boltArbitratorLog) FetchChainActions() (ChainActionMap, error) {
 // typically invoked when the channel force closure is first initiated
 // either by the user or automatically (link error, HTLC actions, etc.).
 func (b *boltArbitratorLog) LogLocalForceCloseInfo(
-	info localForceCloseInfo) error {
+	info channeldb.LocalForceCloseInfo) error {
 
-	return kvdb.Update(b.db, func(tx kvdb.RwTx) error {
+	err := kvdb.Update(b.db, func(tx kvdb.RwTx) error {
 		scopeBucket, err := tx.CreateTopLevelBucket(b.scopeKey[:])
 		if err != nil {
 			return err
 		}
-
-		b := new(bytes.Buffer)
-
-		// first byte is userInitiated bool
-		err = binary.Write(b, endian, info.userInitiated)
-		if err != nil {
+		var buf bytes.Buffer
+		if err := channeldb.SerializeLocalCloseInfo(&buf, &info); err != nil {
 			return err
 		}
 
-		// second byte is length of linkFailureError string
-		err = binary.Write(b, endian, uint8(len(info.linkFailureError)))
-		if err != nil {
-			return err
-		}
-
-		// next bytes are the actual linkFailureError string
-		_, err = b.WriteString(info.linkFailureError)
-		if err != nil {
-			return err
-		}
-
-		// next byte is number of key:value pairs in htlcActions map
-		err = binary.Write(b, endian, uint8(len(info.htlcActions)))
-		if err != nil {
-			return err
-		}
-
-		// next bytes are actual map data
-		for action, htlcs := range info.htlcActions {
-			err = binary.Write(b, endian, action)
-			if err != nil {
-				return err
-			}
-
-			err = channeldb.SerializeHtlcs(b, htlcs...)
-			if err != nil {
-				return err
-			}
-		}
-
-		return scopeBucket.Put(localForceCloseInfoKey, b.Bytes())
+		return scopeBucket.Put(localForceCloseInfoKey, buf.Bytes())
 	}, func() {})
+
+	if err != nil {
+		return err
+	}
+
+	inf, err := b.FetchLocalForceCloseInfo()
+	return nil
 }
 
 // FetchLocalForceCloseInfo attempts to fetch the localForceCloseInfo
 // object that was previously logged in the ArbitratorLog. We use this
 // information when actually marking the channel as closed.
-func (b *boltArbitratorLog) FetchLocalForceCloseInfo() (*localForceCloseInfo,
+func (b *boltArbitratorLog) FetchLocalForceCloseInfo() (
+	*channeldb.LocalForceCloseInfo,
 	error) {
 
-	info := &localForceCloseInfo{
-		htlcActions: make(ChainActionMap),
-	}
+	var info *channeldb.LocalForceCloseInfo
 	infoExists := false
 	err := kvdb.View(b.db, func(tx kvdb.RTx) error {
 		scopeBucket := tx.ReadBucket(b.scopeKey[:])
+
 		if scopeBucket == nil {
 			return errScopeBucketNoExist
 		}
@@ -1124,49 +1074,17 @@ func (b *boltArbitratorLog) FetchLocalForceCloseInfo() (*localForceCloseInfo,
 
 		infoExists = true
 		infoReader := bytes.NewReader(infoBytes)
-		userInitiated := new(bool)
-		err := binary.Read(infoReader, endian, userInitiated)
+		lcInfo, err := channeldb.DeserializeLocalCloseInfo(
+			infoReader)
 		if err != nil {
 			return err
 		}
-		info.userInitiated = *userInitiated
 
-		linkFailureErrorLength := new(uint8)
-		err = binary.Read(infoReader, endian, linkFailureErrorLength)
-		if err != nil {
-			return err
-		}
-		linkFailureErrorBytes := make([]byte, *linkFailureErrorLength)
-		_, err = infoReader.Read(linkFailureErrorBytes)
-		if err != nil {
-			return err
-		}
-		info.linkFailureError = string(linkFailureErrorBytes)
-
-		numActionsKeys := new(uint8)
-		err = binary.Read(infoReader, endian, numActionsKeys)
-		if err != nil {
-			return err
-		}
-		for i := uint8(0); i < *numActionsKeys; i++ {
-			var action ChainAction
-			err = binary.Read(infoReader, endian, &action)
-			if err != nil {
-				return err
-			}
-
-			htlcs, err := channeldb.DeserializeHtlcs(infoReader)
-			if err != nil {
-				return err
-			}
-
-			info.htlcActions[action] = htlcs
-		}
-
+		info = &lcInfo
 		return nil
 	}, func() {
-		info = &localForceCloseInfo{
-			htlcActions: make(ChainActionMap),
+		info = &channeldb.LocalForceCloseInfo{
+			HtlcActions: make(map[string][]channeldb.HTLC),
 		}
 		infoExists = false
 	})

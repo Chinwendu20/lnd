@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -132,6 +133,7 @@ func (h *HarnessRPC) PendingChannels() *lnrpc.PendingChannelsResponse {
 	defer cancel()
 
 	pendingChansRequest := &lnrpc.PendingChannelsRequest{}
+	fmt.Println("calling pending channels")
 	resp, err := h.LN.PendingChannels(ctxt, pendingChansRequest)
 
 	// TODO(yy): We may get a `unable to find arbitrator` error from the

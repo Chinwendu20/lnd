@@ -1056,34 +1056,69 @@ type forceCloseReq struct {
 	closeTx chan *wire.MsgTx
 }
 
-// forceCloseContractOption is used for providing functional options to callers
+// ForceCloseContractOption is used for providing functional options to callers
 // of ForceCloseContract(). We don't export this type directly, but rather the
 // concrete functions implementing this type, so that callers can choose the
 // concrete function that best describes their use case for force closing.
-type forceCloseContractOption func(*ChannelArbitrator)
+type ForceCloseContractOption func(*ChannelArbitrator)
 
 // Functional option for ForceCloseContract() that signifies that the force
 // close is purely user-initiated.
 func UserInitiatedForceClose(ca *ChannelArbitrator) {
-	// Ignore errors since logging force close info is not a critical part
+	// Just log errors since logging force close info is not a critical part
 	// of the force close flow.
-	_ = ca.log.LogLocalForceCloseInfo(localForceCloseInfo{
-		userInitiated: true,
-	})
+	err := ca.log.LogLocalForceCloseInfo(
+		channeldb.LocalForceCloseInfo{
+			UserInitiated: true,
+		})
+
+	if err == nil {
+		return
+	}
+
+	log.Errorf("Error logging "+
+		"user initiated force close info: %v", err.Error())
 }
 
-// Functional option for ForceCloseContract() that signifies that the force
-// close is due to a link failure. Requires the error message of the link
-// failure to be specified.
-//
-//nolint:revive // forceCloseContractOption doesn't need to be exported
-func LinkFailureErrorForceClose(errorMsg string) forceCloseContractOption {
+// LinkFailureErrorForceClose is a functional option for ForceCloseContract()
+// that signifies that the force close is due to a link failure. Requires
+// the error message of the link failure to be specified.
+func LinkFailureErrorForceClose(errorMsg string) ForceCloseContractOption {
 	return func(ca *ChannelArbitrator) {
 		// Ignore errors since logging force close info is not a
 		// critical part of the force close flow.
-		_ = ca.log.LogLocalForceCloseInfo(localForceCloseInfo{
-			linkFailureError: errorMsg,
-		})
+		err := ca.log.LogLocalForceCloseInfo(
+			channeldb.LocalForceCloseInfo{
+				LinkFailureError: errorMsg,
+			})
+
+		if err == nil {
+			return
+		}
+		log.Errorf("Error logging "+
+			"link failure force close info: %v", err.Error())
+	}
+}
+
+func HtlcActionForceClose(chainActions ChainActionMap) ForceCloseContractOption {
+	return func(ca *ChannelArbitrator) {
+
+		htlcMap := make(map[string][]channeldb.HTLC)
+		for action, htlcs := range chainActions {
+			htlcMap[action.String()] = htlcs
+		}
+		// Ignore errors since logging force close info is not a
+		// critical part of the force close flow.
+		err := ca.log.LogLocalForceCloseInfo(
+			channeldb.LocalForceCloseInfo{
+				HtlcActions: htlcMap,
+			})
+
+		if err == nil {
+			return
+		}
+		log.Errorf("Error logging "+
+			"htlc action force close info: %v", err.Error())
 	}
 }
 
@@ -1094,7 +1129,7 @@ func LinkFailureErrorForceClose(errorMsg string) forceCloseContractOption {
 //
 // TODO(roasbeef): just return the summary itself?
 func (c *ChainArbitrator) ForceCloseContract(chanPoint wire.OutPoint,
-	opt forceCloseContractOption) (*wire.MsgTx, error) {
+	opt ForceCloseContractOption) (*wire.MsgTx, error) {
 
 	c.Lock()
 	arbitrator, ok := c.activeChannels[chanPoint]

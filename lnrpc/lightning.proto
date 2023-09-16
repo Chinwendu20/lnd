@@ -2588,6 +2588,8 @@ message PendingChannelsResponse {
         impacts the channel's operation.
         */
         string memo = 13;
+
+        LocalForceCloseInfo local_force_close_info = 14;
     }
 
     message PendingOpenChannel {
