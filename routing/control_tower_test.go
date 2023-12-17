@@ -134,8 +134,8 @@ func TestControlTowerSubscribeSuccess(t *testing.T) {
 			"subscriber %v failed, want %s, got %s", i,
 			channeldb.StatusSucceeded, result.GetStatus())
 
-		settle, _ := result.TerminalInfo()
-		if settle.Preimage != preimg {
+		attempt, _ := result.TerminalInfo()
+		if attempt.Settle.Preimage != preimg {
 			t.Fatal("unexpected preimage")
 		}
 		if len(result.HTLCs) != 1 {
@@ -196,7 +196,7 @@ func TestPaymentControlSubscribeAllSuccess(t *testing.T) {
 	err = pControl.InitPayment(info1.PaymentIdentifier, info1)
 	require.NoError(t, err)
 
-	// Subscription should succeed and immediately report the InFlight
+	// Subscription should succeed and immediately report the Initiated
 	// status.
 	subscription, err := pControl.SubscribeAllPayments()
 	require.NoError(t, err, "expected subscribe to succeed, but got: %v")
@@ -246,8 +246,8 @@ func TestPaymentControlSubscribeAllSuccess(t *testing.T) {
 	// for each payment.
 	results := make(map[lntypes.Hash]*channeldb.MPPayment)
 
-	// After exactly 5 updates both payments will/should have completed.
-	for i := 0; i < 5; i++ {
+	// After exactly 6 updates both payments will/should have completed.
+	for i := 0; i < 6; i++ {
 		select {
 		case item := <-subscription.Updates():
 			id := item.(*channeldb.MPPayment).Info.PaymentIdentifier
@@ -264,9 +264,8 @@ func TestPaymentControlSubscribeAllSuccess(t *testing.T) {
 	)
 
 	settle1, _ := result1.TerminalInfo()
-	require.Equal(
-		t, preimg1, settle1.Preimage, "unexpected preimage payment 1",
-	)
+	require.Equal(t, preimg1, settle1.Settle.Preimage,
+		"unexpected preimage payment 1")
 
 	require.Len(
 		t, result1.HTLCs, 1, "expect 1 htlc for payment 1, got %d",
@@ -283,9 +282,8 @@ func TestPaymentControlSubscribeAllSuccess(t *testing.T) {
 	)
 
 	settle2, _ := result2.TerminalInfo()
-	require.Equal(
-		t, preimg2, settle2.Preimage, "unexpected preimage payment 2",
-	)
+	require.Equal(t, preimg2, settle2.Settle.Preimage,
+		"unexpected preimage payment 2")
 	require.Len(
 		t, result2.HTLCs, 1, "expect 1 htlc for payment 2, got %d",
 		len(result2.HTLCs),
@@ -356,10 +354,6 @@ func TestPaymentControlUnsubscribeSuccess(t *testing.T) {
 	err = pControl.InitPayment(info.PaymentIdentifier, info)
 	require.NoError(t, err)
 
-	// Register a payment update.
-	err = pControl.RegisterAttempt(info.PaymentIdentifier, attempt)
-	require.NoError(t, err)
-
 	// Assert all subscriptions receive the update.
 	select {
 	case update1 := <-subscription1.Updates():
@@ -378,14 +372,9 @@ func TestPaymentControlUnsubscribeSuccess(t *testing.T) {
 	// Close the first subscription.
 	subscription1.Close()
 
-	// Register another update.
-	failInfo := channeldb.HTLCFailInfo{
-		Reason: channeldb.HTLCFailInternal,
-	}
-	_, err = pControl.FailAttempt(
-		info.PaymentIdentifier, attempt.AttemptID, &failInfo,
-	)
-	require.NoError(t, err, "unable to fail htlc")
+	// Register a payment update.
+	err = pControl.RegisterAttempt(info.PaymentIdentifier, attempt)
+	require.NoError(t, err)
 
 	// Assert only subscription 2 receives the update.
 	select {
@@ -400,9 +389,14 @@ func TestPaymentControlUnsubscribeSuccess(t *testing.T) {
 	// Close the second subscription.
 	subscription2.Close()
 
-	// Register a last update.
-	err = pControl.RegisterAttempt(info.PaymentIdentifier, attempt)
-	require.NoError(t, err)
+	// Register another update.
+	failInfo := channeldb.HTLCFailInfo{
+		Reason: channeldb.HTLCFailInternal,
+	}
+	_, err = pControl.FailAttempt(
+		info.PaymentIdentifier, attempt.AttemptID, &failInfo,
+	)
+	require.NoError(t, err, "unable to fail htlc")
 
 	// Assert no subscriptions receive the update.
 	require.Len(t, subscription1.Updates(), 0)

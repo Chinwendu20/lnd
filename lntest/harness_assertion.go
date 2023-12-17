@@ -27,6 +27,7 @@ import (
 	"github.com/lightningnetwork/lnd/lntest/rpc"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lntypes"
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
@@ -692,6 +693,27 @@ func (h *HarnessTest) AssertStreamChannelForceClosed(hn *node.HarnessNode,
 	// the block.
 	closingTxid := h.WaitForChannelCloseEvent(stream)
 	h.Miner.AssertTxInBlock(block, closingTxid)
+
+	// This makes sure that we do not have any lingering unconfirmed anchor
+	// cpfp transactions blocking some of our utxos. Especially important
+	// in case of a neutrino backend.
+	if anchors {
+		err := wait.NoError(func() error {
+			utxos := h.GetUTXOsUnconfirmed(
+				hn, lnwallet.DefaultAccountName,
+			)
+			total := len(utxos)
+			if total == 0 {
+				return nil
+			}
+
+			return fmt.Errorf("%s: assert %s failed: want %d "+
+				"got: %d", hn.Name(), "no unconfirmed cpfp "+
+				"achor sweep transactions", 0, total)
+		}, DefaultTimeout)
+		require.NoErrorf(hn, err, "expected no unconfirmed cpfp "+
+			"anchor sweep utxos")
+	}
 
 	// We should see zero waiting close channels and 1 pending force close
 	// channels now.
@@ -2512,6 +2534,56 @@ func (h *HarnessTest) AssertClosingTxInMempool(cp *lnrpc.ChannelPoint,
 	closeTx := h.Miner.AssertOutpointInMempool(op)
 
 	return closeTx
+}
+
+// AssertCloseSummaryContainsLocalFCInsights asserts that the passed chanPoint
+// is found in the list of passed closedChannels and also asserts that the
+// local force close insights is as expected.
+func (h *HarnessTest) AssertCloseSummaryContainsLocalFCInsights(
+	channels []*lnrpc.ChannelCloseSummary,
+	channelPoint string, initiator string,
+	chainActions []string) {
+
+	passed := false
+	for _, channel := range channels {
+		if channel.ChannelPoint == channelPoint {
+			require.NotNil(h, channel.
+				LocalFirstCloseInsights)
+			require.Equal(h, channel.LocalFirstCloseInsights.
+				LocalForceCloseInitiator, initiator)
+			require.True(h, AsserChainActionsMatch(channel.
+				LocalFirstCloseInsights.
+				LocalForceCloseChainActions, chainActions))
+			require.NotZero(h, channel.LocalFirstCloseInsights.
+				LocalForceCloseBroadcastHeight)
+
+			passed = true
+
+			break
+		}
+	}
+
+	require.True(h, passed,
+		"Could not find channel with same chan point")
+}
+
+// AsserChainActionsMatch asserts that the passed chainActions is of expected
+// length and contains all the items in the actions slice as keys in the
+// chainActions map.
+func AsserChainActionsMatch(chainActions map[string]*lnrpc.ListHTLCHash,
+	actions []string) bool {
+
+	if len(chainActions) != len(actions) {
+		return false
+	}
+
+	for _, action := range actions {
+		if _, ok := chainActions[action]; !ok {
+			return false
+		}
+	}
+
+	return true
 }
 
 // AssertClosingTxInMempool assert that the closing transaction of the given

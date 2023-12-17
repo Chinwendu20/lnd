@@ -74,6 +74,8 @@ func walletCommands() []cli.Command {
 				listSweepsCommand,
 				labelTxCommand,
 				publishTxCommand,
+				getTxCommand,
+				removeTxCommand,
 				releaseOutputCommand,
 				leaseOutputCommand,
 				listLeasesCommand,
@@ -544,7 +546,6 @@ func publishTransaction(ctx *cli.Context) error {
 
 	req := &walletrpc.Transaction{
 		TxHex: tx,
-		Label: ctx.String("label"),
 	}
 
 	_, err = walletClient.PublishTransaction(ctxc, req)
@@ -556,6 +557,103 @@ func publishTransaction(ctx *cli.Context) error {
 		TXID string `json:"txid"`
 	}{
 		TXID: msgTx.TxHash().String(),
+	})
+
+	return nil
+}
+
+var getTxCommand = cli.Command{
+	Name:      "gettx",
+	Usage:     "Returns details of a transaction.",
+	ArgsUsage: "txid",
+	Description: `
+	Query the transaction using the given transaction id and return its 
+	details. An error is returned if the transaction is not found.
+	`,
+	Action: actionDecorator(getTransaction),
+}
+
+func getTransaction(ctx *cli.Context) error {
+	ctxc := getContext()
+
+	// Display the command's help message if we do not have the expected
+	// number of arguments/flags.
+	if ctx.NArg() != 1 {
+		return cli.ShowCommandHelp(ctx, "gettx")
+	}
+
+	walletClient, cleanUp := getWalletClient(ctx)
+	defer cleanUp()
+
+	req := &walletrpc.GetTransactionRequest{
+		Txid: ctx.Args().First(),
+	}
+
+	res, err := walletClient.GetTransaction(ctxc, req)
+	if err != nil {
+		return err
+	}
+
+	printRespJSON(res)
+
+	return nil
+}
+
+var removeTxCommand = cli.Command{
+	Name: "removetx",
+	Usage: "Attempts to remove the unconfirmed transaction with the " +
+		"specified txid and all its children from the underlying " +
+		"internal wallet.",
+	ArgsUsage: "txid",
+	Description: `
+	Removes the transaction with the specified txid from the underlying 
+	wallet which must still be unconfirmmed (in mempool). This command is 
+	useful when a transaction is RBFed by another transaction. The wallet 
+	will only resolve this conflict when the other transaction is mined 
+	(which can take time). If a transaction was removed erronously a simple
+	rebroadcast of the former transaction with the "publishtx" cmd will
+	register the relevant outputs of the raw tx again with the wallet
+	(if there are no errors broadcasting this transaction due to an RBF
+	replacement sitting in the mempool). As soon as a removed transaction
+	is confirmed funds will be registered with the wallet again.`,
+	Flags:  []cli.Flag{},
+	Action: actionDecorator(removeTransaction),
+}
+
+func removeTransaction(ctx *cli.Context) error {
+	ctxc := getContext()
+
+	// Display the command's help message if we do not have the expected
+	// number of arguments/flags.
+	if ctx.NArg() != 1 {
+		return cli.ShowCommandHelp(ctx, "removetx")
+	}
+
+	// Fetch the only cmd argument which must be a valid txid.
+	txid := ctx.Args().First()
+	txHash, err := chainhash.NewHashFromStr(txid)
+	if err != nil {
+		return err
+	}
+
+	walletClient, cleanUp := getWalletClient(ctx)
+	defer cleanUp()
+
+	req := &walletrpc.GetTransactionRequest{
+		Txid: txHash.String(),
+	}
+
+	resp, err := walletClient.RemoveTransaction(ctxc, req)
+	if err != nil {
+		return err
+	}
+
+	printJSON(&struct {
+		Status string `json:"status"`
+		TxID   string `json:"txid"`
+	}{
+		Status: resp.GetStatus(),
+		TxID:   txHash.String(),
 	})
 
 	return nil

@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/chainrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/signrpc"
@@ -218,7 +219,7 @@ func testCPFP(ht *lntest.HarnessTest) {
 	runCPFP(ht, ht.Alice, ht.Bob)
 }
 
-// runCPFP ensures that the daemon can bump an unconfirmed  transaction's fee
+// runCPFP ensures that the daemon can bump an unconfirmed transaction's fee
 // rate by broadcasting a Child-Pays-For-Parent (CPFP) transaction.
 func runCPFP(ht *lntest.HarnessTest, alice, bob *node.HarnessNode) {
 	// Skip this test for neutrino, as it's not aware of mempool
@@ -559,11 +560,29 @@ func testAnchorThirdPartySpend(ht *lntest.HarnessTest) {
 	// PendingChannels RPC under the waiting close section.
 	waitingClose := ht.AssertChannelWaitingClose(alice, aliceChanPoint1)
 
+	// Verify local force close insights.
+	require.NotNil(ht, waitingClose.Channel.LocalFirstCloseInsights)
+	fcInsights := waitingClose.Channel.LocalFirstCloseInsights
+	userInitiated := channeldb.UserInitiated
+	require.Equal(ht, userInitiated.String(), fcInsights.
+		LocalForceCloseInitiator)
+	require.Len(ht, fcInsights.LocalForceCloseChainActions, 0)
+	require.NotZero(ht, fcInsights.LocalForceCloseBroadcastHeight)
+
+	pendingChannelsResp := alice.RPC.PendingChannels()
+	forceCloseChan := pendingChannelsResp.WaitingCloseChannels[0]
+
 	// Verify that the channel Memo is returned even for channels that are
 	// waiting close (close TX broadcasted but not confirmed)
-	pendingChannelsResp := alice.RPC.PendingChannels()
-	require.Equal(ht, testMemo,
-		pendingChannelsResp.WaitingCloseChannels[0].Channel.Memo)
+	require.Equal(ht, testMemo, forceCloseChan.Channel.Memo)
+
+	// Verify the local force close insights.
+	require.NotNil(ht, forceCloseChan.Channel.LocalFirstCloseInsights)
+	fcInsights = forceCloseChan.Channel.LocalFirstCloseInsights
+	require.Equal(ht, userInitiated.String(), fcInsights.
+		LocalForceCloseInitiator)
+	require.Len(ht, fcInsights.LocalForceCloseChainActions, 0)
+	require.NotZero(ht, fcInsights.LocalForceCloseBroadcastHeight)
 
 	// At this point, the channel is waiting close so we have the
 	// commitment transaction in the mempool. Alice's anchor, however,
@@ -593,7 +612,8 @@ func testAnchorThirdPartySpend(ht *lntest.HarnessTest) {
 	// pending force close (close TX confirmed but sweep hasn't happened)
 	pendingChannelsResp = alice.RPC.PendingChannels()
 	require.Equal(ht, testMemo,
-		pendingChannelsResp.PendingForceClosingChannels[0].Channel.Memo)
+		pendingChannelsResp.PendingForceClosingChannels[0].
+			Channel.Memo)
 
 	// With the anchor output located, and the main commitment mined we'll
 	// instruct the wallet to send all coins in the wallet to a new address
@@ -730,4 +750,105 @@ func genAnchorSweep(ht *lntest.HarnessTest,
 	})
 
 	return btcutil.NewTx(tx)
+}
+
+// testRemoveTx tests that we are able to remove an unconfirmed transaction
+// from the internal wallet as long as the tx is still unconfirmed. This test
+// also verifies that after the tx is removed (while unconfirmed) it will show
+// up as confirmed as soon as the original transaction is mined.
+func testRemoveTx(ht *lntest.HarnessTest) {
+	// Create a new node so that we start with no funds on the internal
+	// wallet.
+	alice := ht.NewNode("Alice", nil)
+
+	const initialWalletAmt = btcutil.SatoshiPerBitcoin
+
+	// Funding the node with an initial balance.
+	ht.FundCoins(initialWalletAmt, alice)
+
+	// Create an address for Alice to send the coins to.
+	req := &lnrpc.NewAddressRequest{
+		Type: lnrpc.AddressType_WITNESS_PUBKEY_HASH,
+	}
+	resp := alice.RPC.NewAddress(req)
+
+	// We send half the amount to that address generating two unconfirmed
+	// outpoints in our internal wallet.
+	sendReq := &lnrpc.SendCoinsRequest{
+		Addr:   resp.Address,
+		Amount: initialWalletAmt / 2,
+	}
+	alice.RPC.SendCoins(sendReq)
+	txID := ht.Miner.AssertNumTxsInMempool(1)[0]
+
+	// Make sure the unspent number of utxos is 2 and the unconfirmed
+	// balances add up.
+	unconfirmed := ht.GetUTXOsUnconfirmed(
+		alice, lnwallet.DefaultAccountName,
+	)
+	require.Lenf(ht, unconfirmed, 2, "number of unconfirmed tx")
+
+	// Get the raw transaction to calculate the exact fee.
+	tx := ht.Miner.GetNumTxsFromMempool(1)[0]
+
+	// Calculate the tx fee so we can compare the end amounts. We are
+	// sending from the internal wallet to the internal wallet so only
+	// the tx fee applies when calucalting the final amount of the wallet.
+	txFee := ht.CalculateTxFee(tx)
+
+	// All of alice's balance is unconfirmed and equals the initial amount
+	// minus the tx fee.
+	aliceBalResp := alice.RPC.WalletBalance()
+	expectedAmt := btcutil.Amount(initialWalletAmt) - txFee
+	require.EqualValues(ht, expectedAmt, aliceBalResp.UnconfirmedBalance)
+
+	// Now remove the transaction. We should see that the wallet state
+	// equals the amount prior to sending the transaction. It is important
+	// to understand that we do not remove any transaction from the mempool
+	// (thats not possible in reality) we just remove it from our local
+	// store.
+	var buf bytes.Buffer
+	require.NoError(ht, tx.Serialize(&buf))
+	alice.RPC.RemoveTransaction(&walletrpc.GetTransactionRequest{
+		Txid: txID.String(),
+	})
+
+	// Verify that the balance equals the initial state.
+	confirmed := ht.GetUTXOsConfirmed(
+		alice, lnwallet.DefaultAccountName,
+	)
+	require.Lenf(ht, confirmed, 1, "number confirmed tx")
+
+	// Alice's balance should be the initial balance now because all the
+	// unconfirmed tx got removed.
+	aliceBalResp = alice.RPC.WalletBalance()
+	expectedAmt = btcutil.Amount(initialWalletAmt)
+	require.EqualValues(ht, expectedAmt, aliceBalResp.ConfirmedBalance)
+
+	// Mine a block and make sure the transaction previously broadcasted
+	// shows up in alice's wallet although we removed the transaction from
+	// the wallet when it was unconfirmed.
+	block := ht.Miner.MineBlocks(1)[0]
+	ht.Miner.AssertTxInBlock(block, txID)
+
+	// Verify that alice has 2 confirmed unspent utxos in her default
+	// wallet.
+	err := wait.NoError(func() error {
+		confirmed = ht.GetUTXOsConfirmed(
+			alice, lnwallet.DefaultAccountName,
+		)
+		if len(confirmed) != 2 {
+			return fmt.Errorf("expected 2 confirmed tx, "+
+				" got %v", len(confirmed))
+		}
+
+		return nil
+	}, lntest.DefaultTimeout)
+	require.NoError(ht, err, "timeout checking for confirmed utxos")
+
+	// The remaining balance should equal alice's starting balance minus the
+	// tx fee.
+	aliceBalResp = alice.RPC.WalletBalance()
+	expectedAmt = btcutil.Amount(initialWalletAmt) - txFee
+	require.EqualValues(ht, expectedAmt, aliceBalResp.ConfirmedBalance)
 }

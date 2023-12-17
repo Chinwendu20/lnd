@@ -904,6 +904,8 @@ func (lc *LightningChannel) extractPayDescs(commitHeight uint64,
 		// persist state w.r.t to if forwarded or not, or can
 		// inadvertently trigger replays
 
+		htlc := htlc
+
 		payDesc, err := lc.diskHtlcToPayDesc(
 			feeRate, commitHeight, &htlc,
 			localCommitKeys, remoteCommitKeys,
@@ -8592,12 +8594,12 @@ func (lc *LightningChannel) MarkBorked() error {
 // for it to confirm before taking any further action. It takes a boolean which
 // indicates whether we initiated the close.
 func (lc *LightningChannel) MarkCommitmentBroadcasted(tx *wire.MsgTx,
-	locallyInitiated bool) error {
+	lFCInsight *channeldb.LocalForceCloseInsights) error {
 
 	lc.Lock()
 	defer lc.Unlock()
 
-	return lc.channelState.MarkCommitmentBroadcasted(tx, locallyInitiated)
+	return lc.channelState.MarkCommitmentBroadcasted(tx, lFCInsight)
 }
 
 // MarkCoopBroadcasted marks the channel as a cooperative close transaction has

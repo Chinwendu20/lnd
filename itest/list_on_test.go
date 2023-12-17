@@ -491,6 +491,10 @@ var allTestCases = []*lntest.TestCase{
 		TestFunc: testTrackPayments,
 	},
 	{
+		Name:     "trackpayments compatible",
+		TestFunc: testTrackPaymentsCompatible,
+	},
+	{
 		Name:     "open channel fee policy",
 		TestFunc: testOpenChannelUpdateFeePolicy,
 	},
@@ -553,5 +557,9 @@ var allTestCases = []*lntest.TestCase{
 	{
 		Name:     "query blinded route",
 		TestFunc: testQueryBlindedRoutes,
+	},
+	{
+		Name:     "removetx",
+		TestFunc: testRemoveTx,
 	},
 }

@@ -31,8 +31,14 @@ type dbMPPayment interface {
 	// InFlightHTLCs returns all HTLCs that are in flight.
 	InFlightHTLCs() []channeldb.HTLCAttempt
 
-	// GetFailureReason returns the reason the payment failed.
-	GetFailureReason() *channeldb.FailureReason
+	// AllowMoreAttempts is used to decide whether we can safely attempt
+	// more HTLCs for a given payment state. Return an error if the payment
+	// is in an unexpected state.
+	AllowMoreAttempts() (bool, error)
+
+	// TerminalInfo returns the settled HTLC attempt or the payment's
+	// failure reason.
+	TerminalInfo() (*channeldb.HTLCAttempt, *channeldb.FailureReason)
 }
 
 // ControlTower tracks all outgoing payments made, whose primary purpose is to
@@ -175,12 +181,29 @@ func NewControlTower(db *channeldb.PaymentControl) ControlTower {
 
 // InitPayment checks or records the given PaymentCreationInfo with the DB,
 // making sure it does not already exist as an in-flight payment. Then this
-// method returns successfully, the payment is guaranteed to be in the InFlight
-// state.
+// method returns successfully, the payment is guaranteed to be in the
+// Initiated state.
 func (p *controlTower) InitPayment(paymentHash lntypes.Hash,
 	info *channeldb.PaymentCreationInfo) error {
 
-	return p.db.InitPayment(paymentHash, info)
+	err := p.db.InitPayment(paymentHash, info)
+	if err != nil {
+		return err
+	}
+
+	// Take lock before querying the db to prevent missing or duplicating
+	// an update.
+	p.paymentsMtx.Lock(paymentHash)
+	defer p.paymentsMtx.Unlock(paymentHash)
+
+	payment, err := p.db.FetchPayment(paymentHash)
+	if err != nil {
+		return err
+	}
+
+	p.notifySubscribers(paymentHash, payment)
+
+	return nil
 }
 
 // DeleteFailedAttempts deletes all failed htlcs if the payment was

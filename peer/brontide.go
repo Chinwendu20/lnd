@@ -268,12 +268,8 @@ type Config struct {
 	// HtlcNotifier is used when creating a ChannelLink.
 	HtlcNotifier *htlcswitch.HtlcNotifier
 
-	// TowerClient is used by legacy channels to backup revoked states.
-	TowerClient wtclient.Client
-
-	// AnchorTowerClient is used by anchor channels to backup revoked
-	// states.
-	AnchorTowerClient wtclient.Client
+	// TowerClient is used to backup revoked states.
+	TowerClient wtclient.ClientManager
 
 	// DisconnectPeer is used to disconnect this peer if the cooperative close
 	// process fails.
@@ -703,6 +699,23 @@ func (p *Brontide) Start() error {
 
 	p.startTime = time.Now()
 
+	// Before launching the writeHandler goroutine, we send any channel
+	// sync messages that must be resent for borked channels. We do this to
+	// avoid data races with WriteMessage & Flush calls.
+	if len(msgs) > 0 {
+		p.log.Infof("Sending %d channel sync messages to peer after "+
+			"loading active channels", len(msgs))
+
+		// Send the messages directly via writeMessage and bypass the
+		// writeHandler goroutine.
+		for _, msg := range msgs {
+			if err := p.writeMessage(msg); err != nil {
+				return fmt.Errorf("unable to send "+
+					"reestablish msg: %v", err)
+			}
+		}
+	}
+
 	err = p.pingManager.Start()
 	if err != nil {
 		return fmt.Errorf("could not start ping manager %w", err)
@@ -716,23 +729,6 @@ func (p *Brontide) Start() error {
 
 	// Signal to any external processes that the peer is now active.
 	close(p.activeSignal)
-
-	// Now that the peer has started up, we send any channel sync messages
-	// that must be resent for borked channels.
-	if len(msgs) > 0 {
-		p.log.Infof("Sending %d channel sync messages to peer after "+
-			"loading active channels", len(msgs))
-
-		// Send the messages directly via writeMessage and bypass the
-		// writeHandler goroutine to avoid cases where writeHandler
-		// may exit and cause a deadlock.
-		for _, msg := range msgs {
-			if err := p.writeMessage(msg); err != nil {
-				return fmt.Errorf("unable to send reestablish"+
-					"msg: %v", err)
-			}
-		}
-	}
 
 	// Node announcements don't propagate very well throughout the network
 	// as there isn't a way to efficiently query for them through their
@@ -1040,14 +1036,8 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 		return p.cfg.ChainArb.NotifyContractUpdate(*chanPoint, update)
 	}
 
-	chanType := lnChan.State().ChanType
-
-	// Select the appropriate tower client based on the channel type. It's
-	// okay if the clients are disabled altogether and these values are nil,
-	// as the link will check for nilness before using either.
-	var towerClient htlcswitch.TowerClient
-	switch {
-	case chanType.IsTaproot():
+	var towerClient wtclient.ClientManager
+	if lnChan.ChanType().IsTaproot() {
 		// Leave the tower client as nil for now until the tower client
 		// has support for taproot channels.
 		//
@@ -1060,9 +1050,7 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 				"are not yet taproot channel compatible",
 				chanPoint)
 		}
-	case chanType.HasAnchors():
-		towerClient = p.cfg.AnchorTowerClient
-	default:
+	} else {
 		towerClient = p.cfg.TowerClient
 	}
 
@@ -2009,7 +1997,8 @@ func messageSummary(msg lnwire.Message) string {
 			msg.ChanID, int64(msg.FeePerKw))
 
 	case *lnwire.ChannelReestablish:
-		return fmt.Sprintf("next_local_height=%v, remote_tail_height=%v",
+		return fmt.Sprintf("chan_id=%v, next_local_height=%v, "+
+			"remote_tail_height=%v", msg.ChanID,
 			msg.NextLocalCommitHeight, msg.RemoteCommitTailHeight)
 
 	case *lnwire.ReplyShortChanIDsEnd:
@@ -2093,6 +2082,12 @@ func (p *Brontide) logWireMessage(msg lnwire.Message, read bool) {
 // message buffered on the connection. It is safe to call this method again
 // with a nil message iff a timeout error is returned. This will continue to
 // flush the pending message to the wire.
+//
+// NOTE:
+// Besides its usage in Start, this function should not be used elsewhere
+// except in writeHandler. If multiple goroutines call writeMessage at the same
+// time, panics can occur because WriteMessage and Flush don't use any locking
+// internally.
 func (p *Brontide) writeMessage(msg lnwire.Message) error {
 	// Only log the message on the first attempt.
 	if msg != nil {
@@ -3058,6 +3053,9 @@ func (p *Brontide) handleLinkFailure(failure linkFailureReport) {
 
 		closeTx, err := p.cfg.ChainArb.ForceCloseContract(
 			failure.chanPoint,
+			contractcourt.LinkFailureErrorForceClose(
+				failure.linkErr.Error(),
+			),
 		)
 		if err != nil {
 			p.log.Errorf("unable to force close "+

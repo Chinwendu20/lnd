@@ -341,13 +341,13 @@ service Lightning {
     */
     rpc ListPayments (ListPaymentsRequest) returns (ListPaymentsResponse);
 
-    /*
+    /* lncli: `deletepayments`
     DeletePayment deletes an outgoing payment from DB. Note that it will not
     attempt to delete an In-Flight payment, since that would be unsafe.
     */
     rpc DeletePayment (DeletePaymentRequest) returns (DeletePaymentResponse);
 
-    /*
+    /* lncli: `deletepayments --all`
     DeleteAllPayments deletes all outgoing payments from DB. Note that it will
     not attempt to delete In-Flight payments, since that would be unsafe.
     */
@@ -479,7 +479,7 @@ service Lightning {
     rpc ExportAllChannelBackups (ChanBackupExportRequest)
         returns (ChanBackupSnapshot);
 
-    /*
+    /* lncli: `verifychanbackup`
     VerifyChanBackup allows a caller to verify the integrity of a channel backup
     snapshot. This method will accept either a packed Single or a packed Multi.
     Specifying both will result in an error.
@@ -1608,6 +1608,25 @@ enum Initiator {
     INITIATOR_BOTH = 3;
 }
 
+message ListHTLCHash {
+    // Hash of HTLC
+    repeated bytes hash = 1;
+}
+
+message localForceCloseInsights {
+    // LocalForceCloseInitiator indicates what initiated a force close, it could
+    // be user initiated, due to chain trigger or due to any of link failure
+    // errors.
+    string local_force_close_initiator = 16;
+
+    // The height in which the commitment transaction during a local force
+    // close is broadcasted.
+    uint32 local_force_close_broadcast_height = 17;
+
+    // The map of reason => list of HTLCs (hashes), during a local force close.
+    map<string, ListHTLCHash> local_force_close_chain_actions = 18;
+}
+
 message ChannelCloseSummary {
     // The outpoint (txid:index) of the funding transaction.
     string channel_point = 1;
@@ -1674,6 +1693,9 @@ message ChannelCloseSummary {
 
     //  The confirmed SCID for a zero-conf channel.
     uint64 zero_conf_confirmed_scid = 15 [jstype = JS_STRING];
+
+    // The insights related to a local force close.
+    localForceCloseInsights local_first_close_insights = 16;
 }
 
 enum ResolutionType {
@@ -2654,6 +2676,9 @@ message PendingChannelsResponse {
         impacts the channel's operation.
         */
         string memo = 13;
+
+        // The insights related to a local force close.
+        localForceCloseInsights local_first_close_insights = 14;
     }
 
     message PendingOpenChannel {
@@ -2847,6 +2872,11 @@ message WalletBalanceRequest {
     // The wallet account the balance is shown for.
     // If this is not specified, the balance of the "default" account is shown.
     string account = 1;
+
+    // The minimum number of confirmations each one of your outputs used for the
+    // funding transaction must satisfy. If this is not specified, the default
+    // value of 1 is used.
+    int32 min_confs = 2;
 }
 
 message WalletBalanceResponse {
