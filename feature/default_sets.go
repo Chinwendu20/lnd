@@ -87,4 +87,12 @@ var defaultSetDesc = setDesc{
 		SetInit:    {}, // I
 		SetNodeAnn: {}, // N
 	},
+	lnwire.OptionProvideStorageOptional: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
+	lnwire.OptionWantStorageOptional: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
 }
