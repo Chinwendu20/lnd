@@ -267,6 +267,24 @@ const (
 	// the highest feature bit that can be expressed is:
 	// 1023 * 5 - 1 = 5114.
 	MaxBolt11Feature = 5114
+
+	// OptionWantStorageOptional is an optional feature bit that indicates
+	// that a node wants to store their data with other peers.
+	// See: https://github.com/lightning/bolts/pull/1110/
+	OptionWantStorageOptional FeatureBit = 41
+
+	// OptionWantStorageRequired is a required feature bit that indicates
+	// that a node wants to store their data with other peers.
+	// See: https://github.com/lightning/bolts/pull/1110/
+	OptionWantStorageRequired FeatureBit = 40
+
+	// OptionProvideStorageOptional is an optional feature bit that
+	// indicates that a node offers storing arbitrary data for their peers.
+	OptionProvideStorageOptional FeatureBit = 43
+
+	// OptionProvideStorageRequired is a required feature bit that
+	// indicates that a node offers storing arbitrary data for their peers.
+	OptionProvideStorageRequired FeatureBit = 42
 )
 
 // IsRequired returns true if the feature bit is even, and false otherwise.
@@ -319,6 +337,10 @@ var Features = map[FeatureBit]string{
 	SimpleTaprootChannelsOptionalFinal:   "simple-taproot-chans",
 	SimpleTaprootChannelsRequiredStaging: "simple-taproot-chans-x",
 	SimpleTaprootChannelsOptionalStaging: "simple-taproot-chans-x",
+	OptionWantStorageOptional:            "option_want_storage",
+	OptionWantStorageRequired:            "option_want_storage",
+	OptionProvideStorageOptional:         "option_provide_storage",
+	OptionProvideStorageRequired:         "option_provide_storage",
 }
 
 // RawFeatureVector represents a set of feature bits as defined in BOLT-09.  A
