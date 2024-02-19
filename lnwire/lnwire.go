@@ -460,6 +460,27 @@ func WriteElement(w *bytes.Buffer, element interface{}) error {
 	case ExtraOpaqueData:
 		return e.Encode(w)
 
+	case PeerStorageBlob:
+		var l [2]byte
+		binary.BigEndian.PutUint16(l[:], uint16(len(e)))
+		if _, err := w.Write(l[:]); err != nil {
+			return err
+		}
+
+		if _, err := w.Write(e[:]); err != nil {
+			return err
+		}
+	case YourPeerStorageBlob:
+		var l [2]byte
+		binary.BigEndian.PutUint16(l[:], uint16(len(e)))
+		if _, err := w.Write(l[:]); err != nil {
+			return err
+		}
+
+		if _, err := w.Write(e[:]); err != nil {
+			return err
+		}
+
 	default:
 		return fmt.Errorf("unknown type in WriteElement: %T", e)
 	}
@@ -938,6 +959,30 @@ func ReadElement(r io.Reader, element interface{}) error {
 
 	case *ExtraOpaqueData:
 		return e.Decode(r)
+
+	case *PeerStorageBlob:
+		var l [2]byte
+		if _, err := io.ReadFull(r, l[:]); err != nil {
+			return err
+		}
+		peerStorageLen := binary.BigEndian.Uint16(l[:])
+
+		*e = PeerStorageBlob(make([]byte, peerStorageLen))
+		if _, err := io.ReadFull(r, *e); err != nil {
+			return err
+		}
+
+	case *YourPeerStorageBlob:
+		var l [2]byte
+		if _, err := io.ReadFull(r, l[:]); err != nil {
+			return err
+		}
+		yourPeerStorageLen := binary.BigEndian.Uint16(l[:])
+
+		*e = YourPeerStorageBlob(make([]byte, yourPeerStorageLen))
+		if _, err := io.ReadFull(r, *e); err != nil {
+			return err
+		}
 
 	default:
 		return fmt.Errorf("unknown type in ReadElement: %T", e)
