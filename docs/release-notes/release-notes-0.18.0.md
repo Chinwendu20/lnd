@@ -278,6 +278,10 @@
   and makes TLV Onions, Static Remote Keys, Gossip Queries, compulsory features for
   LND's peers. Data Loss Protection has been compulsory for years.
 
+* [Implement feature bits and message in the peer backup proposal](https://github.com/lightningnetwork/lnd/pull/8490)
+  This PR implements the feature bits and messages in the peer backup proposal
+   referenced here: https://github.com/lightning/bolts/pull/1110
+
 ## Testing
 
 * Added fuzz tests for [onion
