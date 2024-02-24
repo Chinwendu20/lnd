@@ -1478,7 +1478,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		chanNotifier: s.channelNotifier,
 		addrs:        dbs.ChanStateDB,
 	}
-	backupFile := chanbackup.NewMultiFile(cfg.BackupFilePath)
+	backupFile := chanbackup.NewMultiFile(
+		map[chanbackup.BackupKey]string{
+			chanbackup.LocalBackupKey: cfg.BackupFilePath,
+			chanbackup.PeerBackupKey:  cfg.PeerBackupFilePath,
+		})
 	startingChans, err := chanbackup.FetchStaticChanBackups(
 		s.chanStateDB, s.addrSource,
 	)

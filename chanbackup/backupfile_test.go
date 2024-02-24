@@ -73,7 +73,7 @@ func TestUpdateAndSwap(t *testing.T) {
 		// file should remain.
 		{
 			fileName: filepath.Join(
-				tempTestDir, DefaultBackupFileName,
+				tempTestDir, DefaultLocalBackupFileName,
 			),
 			tempFileName: filepath.Join(
 				tempTestDir, DefaultTempBackupFileName,
@@ -86,7 +86,7 @@ func TestUpdateAndSwap(t *testing.T) {
 		// file remains.
 		{
 			fileName: filepath.Join(
-				tempTestDir, DefaultBackupFileName,
+				tempTestDir, DefaultLocalBackupFileName,
 			),
 			tempFileName: filepath.Join(
 				tempTestDir, DefaultTempBackupFileName,

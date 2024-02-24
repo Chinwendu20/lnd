@@ -830,7 +830,7 @@ func testChannelBackupUpdates(ht *lntest.HarnessTest) {
 	// First, we'll create a new node, Carol. We'll also create a temporary
 	// file that Carol will use to store her channel backups.
 	backupFilePath := filepath.Join(
-		backupDir, chanbackup.DefaultBackupFileName,
+		backupDir, chanbackup.DefaultLocalBackupFileName,
 	)
 	carolArgs := fmt.Sprintf("--backupfilepath=%v", backupFilePath)
 	carol := ht.NewNode("carol", []string{carolArgs})

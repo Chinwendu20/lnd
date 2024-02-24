@@ -350,6 +350,7 @@ type Config struct {
 	UnsafeReplay       bool   `long:"unsafe-replay" description:"Causes a link to replay the adds on its commitment txn after starting up, this enables testing of the sphinx replay logic."`
 	MaxPendingChannels int    `long:"maxpendingchannels" description:"The maximum number of incoming pending channels permitted per peer."`
 	BackupFilePath     string `long:"backupfilepath" description:"The target location of the channel backup file"`
+	PeerBackupFilePath string `long:"PeerBackupfilepath" description:"The target location of the channel backup for peers"`
 
 	FeeURL string `long:"feeurl" description:"Optional URL for external fee estimation. If no URL is specified, the method for fee estimation will depend on the chosen backend and network. Must be set for neutrino on mainnet."`
 
@@ -943,6 +944,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	cfg.Tor.WatchtowerKeyPath = CleanAndExpandPath(cfg.Tor.WatchtowerKeyPath)
 	cfg.Watchtower.TowerDir = CleanAndExpandPath(cfg.Watchtower.TowerDir)
 	cfg.BackupFilePath = CleanAndExpandPath(cfg.BackupFilePath)
+	cfg.PeerBackupFilePath = CleanAndExpandPath(cfg.BackupFilePath)
 	cfg.WalletUnlockPasswordFile = CleanAndExpandPath(
 		cfg.WalletUnlockPasswordFile,
 	)
@@ -1387,7 +1389,13 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	// we'll update the file location to match our set network directory.
 	if cfg.BackupFilePath == "" {
 		cfg.BackupFilePath = filepath.Join(
-			cfg.networkDir, chanbackup.DefaultBackupFileName,
+			cfg.networkDir, chanbackup.DefaultLocalBackupFileName,
+		)
+	}
+
+	if cfg.PeerBackupFilePath == "" {
+		cfg.BackupFilePath = filepath.Join(
+			cfg.networkDir, chanbackup.DefaultPeerBackupFileName,
 		)
 	}
 

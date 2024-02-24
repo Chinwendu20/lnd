@@ -161,7 +161,7 @@ func (cfg BaseNodeConfig) ChanBackupPath() string {
 		cfg.DataDir, "chain", lnd.BitcoinChainName,
 		fmt.Sprintf(
 			"%v/%v", cfg.NetParams.Name,
-			chanbackup.DefaultBackupFileName,
+			chanbackup.DefaultLocalBackupFileName,
 		),
 	)
 }

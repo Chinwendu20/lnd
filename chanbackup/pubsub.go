@@ -16,13 +16,23 @@ import (
 // main multi backup location once it learns of new channels or that prior
 // channels have been closed.
 type Swapper interface {
-	// UpdateAndSwap attempts to atomically update the main multi back up
-	// file location with the new fully packed multi-channel backup.
-	UpdateAndSwap(newBackup PackedMulti) error
+	// UpdateAndSwapLocalBackup attempts to atomically update our current
+	// local SCB instance stored by the Swapper instance.
+	UpdateAndSwapLocalBackup(newBackup PackedMulti) error
 
-	// ExtractMulti attempts to obtain and decode the current SCB instance
-	// stored by the Swapper instance.
-	ExtractMulti(keychain keychain.KeyRing) (*Multi, error)
+	// ExtractLocalBackupMulti attempts to obtain and decode our current
+	// local SCB instance stored by the Swapper instance.
+	ExtractLocalBackupMulti(keychain keychain.KeyRing) (*Multi, error)
+
+	// UpdateAndSwapPeerBackup attempts to atomically update our current
+	// peer backup instance stored by the Swapper instance.
+	UpdateAndSwapPeerBackup(newBackup map[string][]byte) error
+
+	// ExtractPeerBackupMulti attempts to extract the PeerBackupMulti we
+	// currently point to into an unpacked version. This method will fail if
+	// no backup file currently exists as the specified location.
+	ExtractPeerBackupMulti(keyChain keychain.KeyRing) (
+		[]byte, error)
 }
 
 // ChannelWithAddrs bundles an open channel along with all the addresses for
@@ -174,7 +184,7 @@ func (s *SubSwapper) updateBackupFile(closedChans ...wire.OutPoint) error {
 	// Before we pack the new set of SCBs, we'll first decode what we
 	// already have on-disk, to make sure we can decode it (proper seed)
 	// and that we're able to combine it with our new data.
-	diskMulti, err := s.Swapper.ExtractMulti(s.keyRing)
+	diskMulti, err := s.Swapper.ExtractLocalBackupMulti(s.keyRing)
 
 	// If the file doesn't exist on disk, then that's OK as it was never
 	// created. In this case we'll continue onwards as it isn't a critical
@@ -232,7 +242,7 @@ func (s *SubSwapper) updateBackupFile(closedChans ...wire.OutPoint) error {
 	// Finally, we'll swap out the old backup for this new one in a single
 	// atomic step, combining the file already on-disk with this set of new
 	// channels.
-	err = s.Swapper.UpdateAndSwap(PackedMulti(b.Bytes()))
+	err = s.Swapper.UpdateAndSwapLocalBackup(PackedMulti(b.Bytes()))
 	if err != nil {
 		return fmt.Errorf("unable to update multi backup: %v", err)
 	}

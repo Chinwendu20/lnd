@@ -1,6 +1,7 @@
 package chanbackup
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -9,15 +10,31 @@ import (
 	"github.com/lightningnetwork/lnd/keychain"
 )
 
+// BackupKey is the key to the type of static backup we store in the `MultiFile`
+// struct.
+type BackupKey uint8
+
 const (
-	// DefaultBackupFileName is the default name of the auto updated static
+	// DefaultLocalBackupFileName is the default name of the auto updated static
 	// channel backup fie.
-	DefaultBackupFileName = "channel.backup"
+	DefaultLocalBackupFileName = "channel.backup"
+
+	// DefaultPeerBackupFileName is the default name to store channel
+	// backups for peers.
+	DefaultPeerBackupFileName = "channel_peer.backup"
 
 	// DefaultTempBackupFileName is the default name of the temporary SCB
 	// file that we'll use to atomically update the primary back up file
 	// when new channel are detected.
 	DefaultTempBackupFileName = "temp-dont-use.backup"
+
+	// LocalBackupKey is the key to our client's static backup in the
+	// `MultiFile` struct.
+	LocalBackupKey BackupKey = 0
+
+	// PeerBackupKey is the key to the static backup we store for our peers
+	// in the `MultiFile` struct.
+	PeerBackupKey BackupKey = 1
 )
 
 var (
@@ -30,44 +47,55 @@ var (
 	ErrNoTempBackupFile = fmt.Errorf("temp backup file not set")
 )
 
-// MultiFile represents a file on disk that a caller can use to read the packed
+// MultiFile represents files on disk that a caller can use to read the packed
 // multi backup into an unpacked one, and also atomically update the contents
 // on disk once new channels have been opened, and old ones closed. This struct
 // relies on an atomic file rename property which most widely use file systems
 // have.
 type MultiFile struct {
+	// Backups is the set of backups we store in MultiFile.
+	Backups map[BackupKey]BackupFile
+}
+
+// BackupFile represents the file on disk that is used to store the backups.
+type BackupFile struct {
 	// fileName is the file name of the main back up file.
 	fileName string
 
 	// tempFileName is the name of the file that we'll use to stage a new
 	// packed multi-chan backup, and the rename to the main back up file.
 	tempFileName string
-
 	// tempFile is an open handle to the temp back up file.
 	tempFile *os.File
 }
 
 // NewMultiFile create a new multi-file instance at the target location on the
 // file system.
-func NewMultiFile(fileName string) *MultiFile {
+func NewMultiFile(fileNameMap map[BackupKey]string) *MultiFile {
 
-	// We'll our temporary backup file in the very same directory as the
-	// main backup file.
-	backupFileDir := filepath.Dir(fileName)
-	tempFileName := filepath.Join(
-		backupFileDir, DefaultTempBackupFileName,
-	)
+	backups := make(map[BackupKey]BackupFile)
+	for key, fileName := range fileNameMap {
+		// We'll our temporary backup file in the very same directory as the
+		// main backup file.
+		backupFileDir := filepath.Dir(fileName)
+		tempFileName := filepath.Join(
+			backupFileDir, DefaultTempBackupFileName,
+		)
+		backups[key] = BackupFile{
+			fileName:     fileName,
+			tempFileName: tempFileName,
+		}
+	}
 
 	return &MultiFile{
-		fileName:     fileName,
-		tempFileName: tempFileName,
+		Backups: backups,
 	}
 }
 
-// UpdateAndSwap will attempt write a new temporary backup file to disk with
-// the newBackup encoded, then atomically swap (via rename) the old file for
-// the new file by updating the name of the new file to the old.
-func (b *MultiFile) UpdateAndSwap(newBackup PackedMulti) error {
+// updateAndSwap attempts to atomically swap (via rename) the old file for the
+// new file by updating the name of the new file to the old.
+func (m *MultiFile) updateAndSwap(backupKey BackupKey, backup []byte) error {
+	b := m.Backups[backupKey]
 	// If the main backup file isn't set, then we can't proceed.
 	if b.fileName == "" {
 		return ErrNoBackupFileExists
@@ -98,9 +126,10 @@ func (b *MultiFile) UpdateAndSwap(newBackup PackedMulti) error {
 
 	// With the file created, we'll write the new packed multi backup and
 	// remove the temporary file all together once this method exits.
-	_, err = b.tempFile.Write([]byte(newBackup))
+	_, err = b.tempFile.Write(backup)
 	if err != nil {
-		return fmt.Errorf("unable to write backup to temp file: %v", err)
+		return fmt.Errorf("unable to write backup to temp file: "+
+			"%v", err)
 	}
 	if err := b.tempFile.Sync(); err != nil {
 		return fmt.Errorf("unable to sync temp file: %v", err)
@@ -123,12 +152,40 @@ func (b *MultiFile) UpdateAndSwap(newBackup PackedMulti) error {
 	return os.Rename(b.tempFileName, b.fileName)
 }
 
-// ExtractMulti attempts to extract the packed multi backup we currently point
-// to into an unpacked version. This method will fail if no backup file
-// currently exists as the specified location.
-func (b *MultiFile) ExtractMulti(keyChain keychain.KeyRing) (*Multi, error) {
+// UpdateAndSwapLocalBackup will attempt to write a new temporary local backup
+// file to disk with the newBackup encoded.
+func (m *MultiFile) UpdateAndSwapLocalBackup(newBackup PackedMulti) error {
+
+	return m.updateAndSwap(LocalBackupKey, newBackup)
+}
+
+// UpdateAndSwapPeerBackup will attempt to write a new temporary peer backup
+// file to disk with the newBackup encoded.
+func (m *MultiFile) UpdateAndSwapPeerBackup(newBackup map[string][]byte) error {
+
+	var scratch bytes.Buffer
+	err := PackPartialPeerBackupMulti(newBackup, &scratch)
+	if err != nil {
+		return err
+	}
+
+	err = m.updateAndSwap(PeerBackupKey, scratch.Bytes())
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+// ExtractLocalBackupMulti attempts to extract the packed multi backup we
+// currently point to into an unpacked version. This method will fail if no
+// backup file currently exists as the specified location.
+func (m *MultiFile) ExtractLocalBackupMulti(keyChain keychain.KeyRing) (*Multi,
+	error) {
 	var err error
 
+	b := m.Backups[LocalBackupKey]
 	// We'll return an error if the main file isn't currently set.
 	if b.fileName == "" {
 		return nil, ErrNoBackupFileExists
@@ -146,4 +203,27 @@ func (b *MultiFile) ExtractMulti(keyChain keychain.KeyRing) (*Multi, error) {
 	// version to the caller.
 	packedMulti := PackedMulti(multiBytes)
 	return packedMulti.Unpack(keyChain)
+}
+
+// ExtractPeerBackupMulti attempts to extract the PeerBackupMulti we currently
+// point to into an unpacked version. This method will fail if no backup file
+// currently exists as the specified location.
+func (m *MultiFile) ExtractPeerBackupMulti(keyChain keychain.KeyRing) (
+	[]byte, error) {
+
+	b := m.Backups[PeerBackupKey]
+	// We'll return an error if the main file isn't currently set.
+	if b.fileName == "" {
+		return nil, ErrNoBackupFileExists
+	}
+
+	// Now that we've confirmed the target file is populated, we'll read
+	// all the contents of the file. This function ensures that file is
+	// always closed, even if we can't read the contents.
+	multiBytes, err := ioutil.ReadFile(b.fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	return multiBytes, nil
 }
