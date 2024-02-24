@@ -3,6 +3,8 @@ package chanbackup
 import (
 	"bytes"
 	"fmt"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/lightningnetwork/lnd/peer"
 	"net"
 	"os"
 	"sync"
@@ -16,13 +18,18 @@ import (
 // main multi backup location once it learns of new channels or that prior
 // channels have been closed.
 type Swapper interface {
-	// UpdateAndSwap attempts to atomically update the main multi back up
-	// file location with the new fully packed multi-channel backup.
-	UpdateAndSwap(newBackup PackedMulti) error
+	// UpdateAndSwapLocalBackup attempts to atomically update our current
+	// local SCB instance stored by the Swapper instance.
+	UpdateAndSwapLocalBackup(newBackup PackedMulti) error
 
-	// ExtractMulti attempts to obtain and decode the current SCB instance
-	// stored by the Swapper instance.
-	ExtractMulti(keychain keychain.KeyRing) (*Multi, error)
+	// ExtractLocalBackupMulti attempts to obtain and decode our current
+	// local SCB instance stored by the Swapper instance.
+	ExtractLocalBackupMulti(keychain keychain.KeyRing) (*Multi, error)
+
+	// UpdateAndSwapPeerBackup attempts to atomically update our current
+	// peer backup instance stored by the Swapper instance.
+	UpdateAndSwapPeerBackup(peerAddr string, newBackup []byte,
+		key keychain.KeyRing) ([]byte, error)
 }
 
 // ChannelWithAddrs bundles an open channel along with all the addresses for
@@ -30,9 +37,9 @@ type Swapper interface {
 type ChannelWithAddrs struct {
 	*channeldb.OpenChannel
 
-	// Addrs is the set of addresses that we can use to reach the target
+	// NetAddrs is the set of addresses that we can use to reach the target
 	// peer.
-	Addrs []net.Addr
+	NetAddrs []net.Addr
 }
 
 // ChannelEvent packages a new update of new channels since subscription, and
@@ -82,8 +89,12 @@ type SubSwapper struct {
 	started sync.Once
 	stopped sync.Once
 
-	// backupState are the set of SCBs for all open channels we know of.
-	backupState map[wire.OutPoint]Single
+	// LocalbackupState are the set of SCBs for all open channels we know of.
+	LocalbackupState map[wire.OutPoint]Single
+
+	PeerBackupState map[string]Multi
+
+	PeerBackupCloser map[string]chan struct{}
 
 	// chanEvents is an active subscription to receive new channel state
 	// over.
@@ -95,8 +106,11 @@ type SubSwapper struct {
 
 	Swapper
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	peerBackupFunc func(data []byte, dataMulti *Multi) error
+
+	quit     chan struct{}
+	wg       sync.WaitGroup
+	findPeer func(peerKey *btcec.PublicKey) (*peer.Brontide, error)
 }
 
 // NewSubSwapper creates a new instance of the SubSwapper given the starting
@@ -104,7 +118,10 @@ type SubSwapper struct {
 // updates, pack a multi backup, and swap the current best backup from its
 // storage location.
 func NewSubSwapper(startingChans []Single, chanNotifier ChannelNotifier,
-	keyRing keychain.KeyRing, backupSwapper Swapper) (*SubSwapper, error) {
+	keyRing keychain.KeyRing, backupSwapper Swapper,
+	peerBackupFunc func(data []byte, dataMulti *Multi) error,
+	findPeer func(peerKey *btcec.PublicKey) (*peer.Brontide, error)) (
+	*SubSwapper, error) {
 
 	// First, we'll subscribe to the latest set of channel updates given
 	// the set of channels we already know of.
@@ -125,11 +142,13 @@ func NewSubSwapper(startingChans []Single, chanNotifier ChannelNotifier,
 	}
 
 	return &SubSwapper{
-		backupState: backupState,
-		chanEvents:  chanEvents,
-		keyRing:     keyRing,
-		Swapper:     backupSwapper,
-		quit:        make(chan struct{}),
+		LocalbackupState: backupState,
+		chanEvents:       chanEvents,
+		keyRing:          keyRing,
+		Swapper:          backupSwapper,
+		quit:             make(chan struct{}),
+		peerBackupFunc:   peerBackupFunc,
+		findPeer:         findPeer,
 	}, nil
 }
 
@@ -142,10 +161,17 @@ func (s *SubSwapper) Start() error {
 		// Before we enter our main loop, we'll update the on-disk
 		// state with the latest Single state, as nodes may have new
 		// advertised addresses.
-		if err := s.updateBackupFile(); err != nil {
-			startErr = fmt.Errorf("unable to refresh backup "+
-				"file: %v", err)
+		dataBytes, _, err := s.combineSCBWithOnDiskBackup()
+		if err != nil {
+			startErr = fmt.Errorf("unable to update backup "+
+				"%v", err)
 			return
+		}
+
+		err = s.Swapper.UpdateAndSwapLocalBackup(dataBytes)
+		if err != nil {
+			startErr = fmt.Errorf("unable to update multi "+
+				"backup: %v", err)
 		}
 
 		s.wg.Add(1)
@@ -167,21 +193,20 @@ func (s *SubSwapper) Stop() error {
 	return nil
 }
 
-// updateBackupFile updates the backup file in place given the current state of
-// the SubSwapper. We accept the set of channels that were closed between this
-// update and the last to make sure we leave them out of our backup set union.
-func (s *SubSwapper) updateBackupFile(closedChans ...wire.OutPoint) error {
+func (s *SubSwapper) combineSCBWithOnDiskBackup(
+	closedChans ...wire.OutPoint) ([]byte, *Multi, error) {
+
 	// Before we pack the new set of SCBs, we'll first decode what we
 	// already have on-disk, to make sure we can decode it (proper seed)
 	// and that we're able to combine it with our new data.
-	diskMulti, err := s.Swapper.ExtractMulti(s.keyRing)
+	diskMulti, err := s.Swapper.ExtractLocalBackupMulti(s.keyRing)
 
 	// If the file doesn't exist on disk, then that's OK as it was never
 	// created. In this case we'll continue onwards as it isn't a critical
 	// error.
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("unable to extract on disk encrypted "+
-			"SCB: %v", err)
+		return nil, nil, fmt.Errorf("unable to extract on disk "+
+			"encrypted SCB: %v", err)
 	}
 
 	// Now that we have channels stored on-disk, we'll create a new set of
@@ -197,11 +222,11 @@ func (s *SubSwapper) updateBackupFile(closedChans ...wire.OutPoint) error {
 			combinedBackup[chanPoint] = diskChannel
 		}
 	}
-	for _, memChannel := range s.backupState {
+	for _, memChannel := range s.LocalbackupState {
 		chanPoint := memChannel.FundingOutpoint
 		if _, ok := combinedBackup[chanPoint]; ok {
-			log.Warnf("Replacing disk backup for ChannelPoint(%v) "+
-				"w/ newer version", chanPoint)
+			log.Warnf("Replacing disk backup for "+
+				"ChannelPoint(%v) w/ newer version", chanPoint)
 		}
 
 		combinedBackup[chanPoint] = memChannel
@@ -226,18 +251,11 @@ func (s *SubSwapper) updateBackupFile(closedChans ...wire.OutPoint) error {
 	var b bytes.Buffer
 	err = newMulti.PackToWriter(&b, s.keyRing)
 	if err != nil {
-		return fmt.Errorf("unable to pack multi backup: %v", err)
+		return nil, nil, fmt.Errorf("unable to pack multi "+
+			"backup: %v", err)
 	}
 
-	// Finally, we'll swap out the old backup for this new one in a single
-	// atomic step, combining the file already on-disk with this set of new
-	// channels.
-	err = s.Swapper.UpdateAndSwap(PackedMulti(b.Bytes()))
-	if err != nil {
-		return fmt.Errorf("unable to update multi backup: %v", err)
-	}
-
-	return nil
+	return b.Bytes(), &newMulti, nil
 }
 
 // backupFileUpdater is the primary goroutine of the SubSwapper which is
@@ -258,17 +276,18 @@ func (s *SubSwapper) backupUpdater() {
 		// changes, and swap out the old packed multi with a new one
 		// with the latest channel state.
 		case chanUpdate := <-s.chanEvents.ChanUpdates:
-			oldStateSize := len(s.backupState)
+			oldStateSize := len(s.LocalbackupState)
 
 			// For all new open channels, we'll create a new SCB
 			// given the required information.
 			for _, newChan := range chanUpdate.NewChans {
-				log.Debugf("Adding channel %v to backup state",
-					newChan.FundingOutpoint)
+				log.Debugf("Adding channel %v to backup "+
+					"state", newChan.FundingOutpoint)
 
-				s.backupState[newChan.FundingOutpoint] = NewSingle(
-					newChan.OpenChannel, newChan.Addrs,
-				)
+				s.LocalbackupState[newChan.FundingOutpoint] =
+					NewSingle(
+						newChan.OpenChannel, newChan.NetAddrs,
+					)
 			}
 
 			// For all closed channels, we'll remove the prior
@@ -277,27 +296,46 @@ func (s *SubSwapper) backupUpdater() {
 				[]wire.OutPoint, 0, len(chanUpdate.ClosedChans),
 			)
 			for i, closedChan := range chanUpdate.ClosedChans {
-				log.Debugf("Removing channel %v from backup "+
-					"state", newLogClosure(func() string {
-					return chanUpdate.ClosedChans[i].String()
-				}))
+				log.Debugf("Removing channel %v from "+
+					"backup state", newLogClosure(
+					func() string {
+						return chanUpdate.ClosedChans[i].
+							String()
+					}))
 
-				delete(s.backupState, closedChan)
+				delete(s.LocalbackupState, closedChan)
 
 				closedChans = append(closedChans, closedChan)
+
 			}
 
-			newStateSize := len(s.backupState)
+			newStateSize := len(s.LocalbackupState)
 
 			log.Infof("Updating on-disk multi SCB backup: "+
 				"num_old_chans=%v, num_new_chans=%v",
 				oldStateSize, newStateSize)
 
-			// With out new state constructed, we'll, atomically
-			// update the on-disk backup state.
-			if err := s.updateBackupFile(closedChans...); err != nil {
-				log.Errorf("unable to update backup file: %v",
-					err)
+			newMultiBytes, multi, err := s.
+				combineSCBWithOnDiskBackup(closedChans...)
+
+			if err != nil {
+				log.Errorf("unable to create new multi "+
+					"using closed chans: %v", err)
+			} else {
+				// With out new state constructed, we'll,
+				// atomically update the on-disk backup state.
+				err = s.Swapper.UpdateAndSwapLocalBackup(
+					newMultiBytes)
+				if err != nil {
+					log.Errorf("unable to update "+
+						"local multi backup: %v", err)
+				}
+
+				err := s.peerBackupFunc(newMultiBytes, multi)
+				if err != nil {
+					log.Errorf("unable to backup "+
+						"with peer: %v", err)
+				}
 			}
 
 		// TODO(roasbeef): refresh periodically on a time basis due to

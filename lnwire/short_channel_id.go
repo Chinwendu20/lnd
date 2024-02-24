@@ -70,6 +70,22 @@ func (c ShortChannelID) IsDefault() bool {
 	return c == ShortChannelID{}
 }
 
+func (c ShortChannelID) DeepEqual(id ShortChannelID) bool {
+	if c.BlockHeight != id.BlockHeight {
+		return false
+	}
+
+	if c.TxIndex != id.TxIndex {
+		return false
+	}
+
+	if c.TxPosition != id.TxPosition {
+		return false
+	}
+
+	return true
+}
+
 // EShortChannelID is an encoder for ShortChannelID. It is exported so other
 // packages can use the encoding scheme.
 func EShortChannelID(w io.Writer, val interface{}, buf *[8]byte) error {

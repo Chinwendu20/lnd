@@ -956,7 +956,7 @@ type epochCancel struct {
 // the notifier uses to check if they are behind on blocks and catch them up. If
 // they do not provide one, then a notification will be dispatched immediately
 // for the current tip of the chain upon a successful registration.
-func (b *BitcoindNotifier) RegisterBlockEpochNtfn(
+func (b *BitcoindNotifier) registerBlockEpochNtfn(
 	bestBlock *chainntnfs.BlockEpoch) (*chainntnfs.BlockEpochEvent, error) {
 
 	reg := &blockEpochRegistration{
@@ -1035,6 +1035,65 @@ func (b *BitcoindNotifier) RegisterBlockEpochNtfn(
 			},
 		}, nil
 	}
+}
+
+func (b *BitcoindNotifier) RegisterBlockEpochNtfn(
+	bestBlock *chainntnfs.BlockEpoch) (*chainntnfs.BlockEpochEvent, error) {
+
+	return b.registerBlockEpochNtfn(bestBlock)
+}
+
+func (b *BitcoindNotifier) RegisterBlockEpochNtfnHeight(
+	notificationHeight int32) (*chainntnfs.BlockEpochHeightEvent, error) {
+
+	epochEvent, err := b.registerBlockEpochNtfn(nil)
+
+	if err != nil {
+		return nil, err
+	}
+	notifyChan := make(chan struct{}, 20)
+	cancelChan := make(chan struct{})
+
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+
+		for {
+			select {
+			case ntfn := <-epochEvent.Epochs:
+
+				if ntfn.Height == notificationHeight {
+					select {
+					case notifyChan <- struct{}{}:
+
+					case <-cancelChan:
+						return
+
+					case <-b.quit:
+						return
+					}
+				}
+
+			case <-cancelChan:
+				return
+
+			case <-b.quit:
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-b.quit:
+		return nil, errors.New("chainntnfs: system interrupt while " +
+			"attempting to register for block epoch notification")
+	default:
+		return &chainntnfs.BlockEpochHeightEvent{
+			Notification: notifyChan,
+			Cancel:       cancelChan,
+		}, nil
+	}
+
 }
 
 // GetBlock is used to retrieve the block with the given hash. This function

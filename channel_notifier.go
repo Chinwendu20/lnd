@@ -69,7 +69,7 @@ func (c *channelNotifier) SubscribeChans(startingChans map[wire.OutPoint]struct{
 			NewChans: []chanbackup.ChannelWithAddrs{
 				{
 					OpenChannel: newOrPendingChan,
-					Addrs:       nodeAddrs,
+					NetAddrs:    nodeAddrs,
 				},
 			},
 		}

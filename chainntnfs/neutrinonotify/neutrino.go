@@ -1035,7 +1035,7 @@ type epochCancel struct {
 // the notifier uses to check if they are behind on blocks and catch them up. If
 // they do not provide one, then a notification will be dispatched immediately
 // for the current tip of the chain upon a successful registration.
-func (n *NeutrinoNotifier) RegisterBlockEpochNtfn(
+func (n *NeutrinoNotifier) registerBlockEpochNtfn(
 	bestBlock *chainntnfs.BlockEpoch) (*chainntnfs.BlockEpochEvent, error) {
 
 	reg := &blockEpochRegistration{
@@ -1114,6 +1114,66 @@ func (n *NeutrinoNotifier) RegisterBlockEpochNtfn(
 			},
 		}, nil
 	}
+}
+
+func (n *NeutrinoNotifier) RegisterBlockEpochNtfn(
+	bestBlock *chainntnfs.BlockEpoch) (*chainntnfs.BlockEpochEvent, error) {
+
+	return n.registerBlockEpochNtfn(bestBlock)
+}
+
+func (n *NeutrinoNotifier) RegisterBlockEpochNtfnHeight(
+	notificationHeight int32) (*chainntnfs.
+	BlockEpochHeightEvent, error) {
+
+	epochEvent, err := n.registerBlockEpochNtfn(nil)
+
+	if err != nil {
+		return nil, err
+	}
+	notifyChan := make(chan struct{}, 20)
+	cancelChan := make(chan struct{})
+
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+
+		for {
+			select {
+			case ntfn := <-epochEvent.Epochs:
+
+				if ntfn.Height == notificationHeight {
+					select {
+					case notifyChan <- struct{}{}:
+
+					case <-cancelChan:
+						return
+
+					case <-n.quit:
+						return
+					}
+				}
+
+			case <-cancelChan:
+				return
+
+			case <-n.quit:
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-n.quit:
+		return nil, errors.New("chainntnfs: system interrupt while " +
+			"attempting to register for block epoch notification")
+	default:
+		return &chainntnfs.BlockEpochHeightEvent{
+			Notification: notifyChan,
+			Cancel:       cancelChan,
+		}, nil
+	}
+
 }
 
 // NeutrinoChainConn is a wrapper around neutrino's chain backend in order
