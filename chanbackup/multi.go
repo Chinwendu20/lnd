@@ -188,4 +188,90 @@ func (p *PackedMulti) Unpack(keyRing keychain.KeyRing) (*Multi, error) {
 	return &m, nil
 }
 
+type PeerBackupMulti map[string]*Multi
+
+func (p PeerBackupMulti) Encode(b *bytes.Buffer, keyRing keychain.KeyRing) error {
+	err := lnwire.WriteElements(b, uint32(len(p)))
+	if err != nil {
+		return err
+	}
+
+	for k, v := range p {
+		err = lnwire.WriteElements(b, k)
+		if err != nil {
+			return err
+		}
+
+		err = v.PackToWriter(b, keyRing)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p PeerBackupMulti) Decode(r io.Reader, keyRing keychain.KeyRing) error {
+	var numPeerBackupMulti uint32
+	err := lnwire.ReadElements(r, &numPeerBackupMulti)
+	if err != nil {
+		return err
+	}
+
+	for i := uint32(0); i < numPeerBackupMulti; i++ {
+		var key string
+		err := lnwire.ReadElements(r, &key)
+		if err != nil {
+			return err
+		}
+		var multiBytes []byte
+		pMulti := PackedMulti(multiBytes)
+
+		multi, err := pMulti.Unpack(keyRing)
+		if err != nil {
+			return err
+		}
+
+		p[key] = multi
+	}
+
+	return nil
+}
+
+func (p Multi) DeepEqual(backup *Multi) bool {
+	if p.Version != backup.Version {
+		return false
+	}
+
+	if len(p.StaticBackups) != len(backup.StaticBackups) {
+		return false
+	}
+
+	mapSCBToChanID := make(map[lnwire.ShortChannelID]Single)
+	for _, single := range p.StaticBackups {
+		mapSCBToChanID[single.ShortChannelID] = single
+	}
+
+	mapSCBToChanID2 := make(map[lnwire.ShortChannelID]Single)
+	for _, single := range backup.StaticBackups {
+		mapSCBToChanID2[single.ShortChannelID] = single
+	}
+
+	for id, single := range mapSCBToChanID {
+		single2, ok := mapSCBToChanID2[id]
+		if !ok {
+			return false
+		}
+
+		check := single.DeepEqual(single2)
+
+		if !check {
+			return false
+		}
+
+		delete(mapSCBToChanID, id)
+	}
+
+	return true
+}
+
 // TODO(roasbsef): fuzz parsing

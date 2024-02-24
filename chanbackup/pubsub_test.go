@@ -135,7 +135,7 @@ func assertExpectedBackupSwap(t *testing.T, swapper *mockSwapper,
 		for _, newChan := range newMulti.StaticBackups {
 			newChans[newChan.FundingOutpoint] = newChan
 		}
-		for _, backup := range subSwapper.backupState {
+		for _, backup := range subSwapper.LocalbackupState {
 			_, ok := newChans[backup.FundingOutpoint]
 			if !ok {
 				t.Fatalf("didn't find backup in original set: %v",

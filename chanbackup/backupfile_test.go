@@ -243,7 +243,7 @@ func TestExtractMulti(t *testing.T) {
 
 		// With our file made, we'll now attempt to read out the
 		// multi-file.
-		freshUnpackedMulti, err := backupFile.ExtractMulti(keyRing)
+		freshUnpackedMulti, err := backupFile.ExtractLocalBackupMulti(keyRing)
 		switch {
 		// If this is a valid test case, and we failed, then we'll
 		// return an error.
@@ -267,7 +267,7 @@ func TestExtractMulti(t *testing.T) {
 
 		// We should also be able to read the file again, as we have an
 		// existing handle to it.
-		freshUnpackedMulti, err = backupFile.ExtractMulti(keyRing)
+		freshUnpackedMulti, err = backupFile.ExtractLocalBackupMulti(keyRing)
 		if err != nil {
 			t.Fatalf("unable to unpack multi: %v", err)
 		}

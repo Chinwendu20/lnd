@@ -5,6 +5,7 @@ import (
 	"container/list"
 	"errors"
 	"fmt"
+	"github.com/lightningnetwork/lnd/chanbackup"
 	"math/rand"
 	"net"
 	"sync"
@@ -74,6 +75,8 @@ const (
 
 	// ErrorBufferSize is the number of historic peer errors that we store.
 	ErrorBufferSize = 10
+
+	peerStorageDelay = 2 * time.Second
 )
 
 var (
@@ -135,6 +138,13 @@ type ChannelCloseUpdate struct {
 type TimestampedError struct {
 	Error     error
 	Timestamp time.Time
+}
+
+type BackupPeerStorage interface {
+	VerifyBackup(data []byte, latestPeerBackup *chanbackup.Multi) (error,
+		bool, *chanbackup.Multi)
+	StorePeerBackup(data []byte, peerAddr string) ([]byte, error)
+	RetrieveBackupForPeer(perAddr string) []byte
 }
 
 // Config defines configuration fields that are necessary for a peer object
@@ -365,6 +375,8 @@ type Config struct {
 
 	// Quit is the server's quit channel. If this is closed, we halt operation.
 	Quit chan struct{}
+
+	PeerStorage BackupPeerStorage
 }
 
 // Brontide is an active peer on the Lightning Network. This struct is responsible
@@ -487,7 +499,10 @@ type Brontide struct {
 	wg         sync.WaitGroup
 
 	// log is a peer-specific logging instance.
-	log btclog.Logger
+	log              btclog.Logger
+	SendBackup       int
+	LatestPeerBackup *chanbackup.Multi
+	SendBackupMtx    sync.RWMutex
 }
 
 // A compile-time check to ensure that Brontide satisfies the lnpeer.Peer interface.
@@ -1726,7 +1741,10 @@ out:
 				p.storeError(err)
 				p.log.Errorf("%v", err)
 			}
-
+		case *lnwire.PeerStorage:
+			p.handlePeerStorageMessage(msg)
+		case *lnwire.YourPeerStorage:
+			p.handleYourPeerStorageMessage(msg)
 		default:
 			// If the message we received is unknown to us, store
 			// the type to track the failure.
@@ -3341,6 +3359,10 @@ func (p *Brontide) sendInitMsg(legacyChan bool) error {
 	return p.writeMessage(msg)
 }
 
+func (p *Brontide) sendYourPeerStorageMsg(msg *lnwire.YourPeerStorage) error {
+	return p.writeMessage(msg)
+}
+
 // resendChanSyncMsg will attempt to find a channel sync message for the closed
 // channel and resend it to our peer.
 func (p *Brontide) resendChanSyncMsg(cid lnwire.ChannelID) error {
@@ -4042,4 +4064,45 @@ func (p *Brontide) sendLinkUpdateMsg(cid lnwire.ChannelID, msg lnwire.Message) {
 	// With the stream obtained, add the message to the stream so we can
 	// continue processing message.
 	chanStream.AddMsg(msg)
+}
+
+func (p *Brontide) handlePeerStorageMessage(msg *lnwire.PeerStorage) {
+	latestBlob, err := p.cfg.PeerStorage.StorePeerBackup(msg.Blob, p.
+		String())
+	if err != nil {
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+		return
+	}
+
+	time.AfterFunc(peerStorageDelay, func() {
+		err := p.SendMessage(true, &lnwire.YourPeerStorage{
+			Blob: latestBlob,
+		})
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+	})
+
+}
+
+func (p *Brontide) handleYourPeerStorageMessage(msg *lnwire.YourPeerStorage) {
+
+	err, verified, backup := p.cfg.PeerStorage.VerifyBackup(msg.Blob,
+		p.LatestPeerBackup)
+
+	if err != nil {
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+		return
+	}
+
+	var sendBackup int
+	if !verified {
+		sendBackup = 1
+	}
+
+	p.SendBackupMtx.Lock()
+	p.SendBackup = sendBackup
+	p.LatestPeerBackup = backup
+	p.SendBackupMtx.Unlock()
 }

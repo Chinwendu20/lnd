@@ -163,6 +163,9 @@ type ChainNotifier interface {
 	// current tip of the chain upon a successful registration.
 	RegisterBlockEpochNtfn(*BlockEpoch) (*BlockEpochEvent, error)
 
+	RegisterBlockEpochNtfnHeight(
+		notificationHeight int32) (*BlockEpochHeightEvent, error)
+
 	// Start the ChainNotifier. Once started, the implementation should be
 	// ready, and able to receive notification registrations from clients.
 	Start() error
@@ -385,6 +388,11 @@ type BlockEpochEvent struct {
 	// Cancel is a closure that should be executed by the caller in the case
 	// that they wish to abandon their registered block epochs notification.
 	Cancel func()
+}
+
+type BlockEpochHeightEvent struct {
+	Notification <-chan struct{}
+	Cancel       chan struct{}
 }
 
 // NotifierDriver represents a "driver" for a particular interface. A driver is

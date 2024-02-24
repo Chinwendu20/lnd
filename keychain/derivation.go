@@ -167,6 +167,18 @@ func (k KeyLocator) IsEmpty() bool {
 	return k.Family == 0 && k.Index == 0
 }
 
+func (k KeyLocator) DeepEqual(locator KeyLocator) bool {
+	if k.Family != locator.Family {
+		return false
+	}
+
+	if k.Index != locator.Index {
+		return false
+	}
+
+	return true
+}
+
 // KeyDescriptor wraps a KeyLocator and also optionally includes a public key.
 // Either the KeyLocator must be non-empty, or the public key pointer be
 // non-nil. This will be used by the KeyRing interface to lookup arbitrary
@@ -179,6 +191,19 @@ type KeyDescriptor struct {
 	// PubKey is an optional public key that fully describes a target key.
 	// If this is nil, the KeyLocator MUST NOT be empty.
 	PubKey *btcec.PublicKey
+}
+
+func (d KeyDescriptor) DeepEqual(key KeyDescriptor) bool {
+
+	if !d.KeyLocator.DeepEqual(key.KeyLocator) {
+		return false
+	}
+
+	if d.PubKey != key.PubKey {
+		return false
+	}
+
+	return true
 }
 
 // KeyRing is the primary interface that will be used to perform public

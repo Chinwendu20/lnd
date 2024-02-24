@@ -426,6 +426,35 @@ type ChannelConstraints struct {
 	CsvDelay uint16
 }
 
+func (c ChannelConstraints) DeepEqual(constraints ChannelConstraints) bool {
+
+	if c.DustLimit != constraints.DustLimit {
+		return false
+	}
+
+	if c.ChanReserve != constraints.ChanReserve {
+		return false
+	}
+
+	if c.MaxPendingAmount != constraints.MaxPendingAmount {
+		return false
+	}
+
+	if c.MinHTLC != constraints.MinHTLC {
+		return false
+	}
+
+	if c.MaxAcceptedHtlcs != constraints.MaxAcceptedHtlcs {
+		return false
+	}
+
+	if c.CsvDelay != constraints.CsvDelay {
+		return false
+	}
+
+	return true
+}
+
 // ChannelConfig is a struct that houses the various configuration opens for
 // channels. Each side maintains an instance of this configuration file as it
 // governs: how the funding and commitment transaction to be created, the
@@ -468,6 +497,34 @@ type ChannelConfig struct {
 	// from the per-commitment point) is used within the "to self" clause
 	// within any HTLC output scripts.
 	HtlcBasePoint keychain.KeyDescriptor
+}
+
+func (c ChannelConfig) DeepEqual(cfg ChannelConfig) bool {
+	if !c.ChannelConstraints.DeepEqual(cfg.ChannelConstraints) {
+		return false
+	}
+
+	if !c.MultiSigKey.DeepEqual(cfg.MultiSigKey) {
+		return false
+	}
+
+	if !c.RevocationBasePoint.DeepEqual(cfg.RevocationBasePoint) {
+		return false
+	}
+
+	if !c.PaymentBasePoint.DeepEqual(cfg.PaymentBasePoint) {
+		return false
+	}
+
+	if !c.DelayBasePoint.DeepEqual(cfg.DelayBasePoint) {
+		return false
+	}
+
+	if !c.HtlcBasePoint.DeepEqual(cfg.HtlcBasePoint) {
+		return false
+	}
+
+	return true
 }
 
 // ChannelCommitment is a snapshot of the commitment state at a particular

@@ -3,6 +3,9 @@ package itest
 import (
 	"context"
 	"fmt"
+	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/keychain"
+	"net"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -367,3 +370,38 @@ func runUtxoSelectionTestCase(ht *lntest.HarnessTest, t *testing.T, alice,
 		0,
 	)
 }
+
+
+
+type Single struct {
+	Version          SingleBackupVersion
+	IsInitiator      bool
+	ChainHash        chainhash.Hash
+	FundingOutpoint  wire.OutPoint
+	ShortChannelID   lnwire.ShortChannelID
+	RemoteNodePub    *btcec.PublicKey
+	Addresses        []net.Addr
+	Capacity         btcutil.Amount
+	LocalChanCfg     channeldb.ChannelConfig
+	RemoteChanCfg    channeldb.ChannelConfig
+	ShaChainRootDesc keychain.KeyDescriptor
+	LeaseExpiry      uint32
+}
+Single is a static description of an existing channel that can be used for t
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

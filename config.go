@@ -312,10 +312,10 @@ type Config struct {
 	LetsEncryptListen string `long:"letsencryptlisten" description:"The IP:port on which lnd will listen for Let's Encrypt challenges. Let's Encrypt will always try to contact on port 80. Often non-root processes are not allowed to bind to ports lower than 1024. This configuration option allows a different port to be used, but must be used in combination with port forwarding from port 80. This configuration can also be used to specify another IP address to listen on, for example an IPv6 address."`
 	LetsEncryptDomain string `long:"letsencryptdomain" description:"Request a Let's Encrypt certificate for this domain. Note that the certificate is only requested and stored when the first rpc connection comes in."`
 
-	// We'll parse these 'raw' string arguments into real net.Addrs in the
+	// We'll parse these 'raw' string arguments into real net.NetAddrs in the
 	// loadConfig function. We need to expose the 'raw' strings so the
 	// command line library can access them.
-	// Only the parsed net.Addrs should be used!
+	// Only the parsed net.NetAddrs should be used!
 	RawRPCListeners   []string `long:"rpclisten" description:"Add an interface/port/socket to listen for RPC connections"`
 	RawRESTListeners  []string `long:"restlisten" description:"Add an interface/port/socket to listen for REST connections"`
 	RawListeners      []string `long:"listen" description:"Add an interface/port to listen for peer connections"`
@@ -498,7 +498,8 @@ type Config struct {
 
 	// HTTPHeaderTimeout is the maximum duration that the server will wait
 	// before timing out reading the headers of an HTTP request.
-	HTTPHeaderTimeout time.Duration `long:"http-header-timeout" description:"The maximum duration that the server will wait before timing out reading the headers of an HTTP request."`
+	HTTPHeaderTimeout  time.Duration `long:"http-header-timeout" description:"The maximum duration that the server will wait before timing out reading the headers of an HTTP request."`
+	PeerBackupFilePath string
 }
 
 // GRPCConfig holds the configuration options for the gRPC server.

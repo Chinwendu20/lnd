@@ -325,7 +325,9 @@ type server struct {
 
 	quit chan struct{}
 
-	wg sync.WaitGroup
+	wg           sync.WaitGroup
+	myPeerBackup chan peer.PeerBackupResp
+	PeerBackup   *chanbackup.PeerBackup
 }
 
 // updatePersistentPeerAddrs subscribes to topology changes and stores
@@ -1478,7 +1480,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		chanNotifier: s.channelNotifier,
 		addrs:        dbs.ChanStateDB,
 	}
-	backupFile := chanbackup.NewMultiFile(cfg.BackupFilePath)
+	backupFile := chanbackup.NewMultiFile(map[chanbackup.BackupKey]string{
+		chanbackup.LocalBackupKey: cfg.BackupFilePath,
+		chanbackup.PeerBackupKey:  cfg.PeerBackupFilePath,
+	})
 	startingChans, err := chanbackup.FetchStaticChanBackups(
 		s.chanStateDB, s.addrSource,
 	)
@@ -1487,11 +1492,16 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 	s.chanSubSwapper, err = chanbackup.NewSubSwapper(
 		startingChans, chanNotifier, s.cc.KeyRing, backupFile,
+		s.sendBackupToPeer, s.FindPeer,
 	)
 	if err != nil {
 		return nil, err
 	}
-
+	s.PeerBackup = chanbackup.NewPeerBackup(&chanbackup.
+		PeerBackupConfig{
+		Keychain: s.cc.KeyRing,
+		Swapper:  backupFile,
+	})
 	// Assemble a peer notifier which will provide clients with subscriptions
 	// to peer online and offline events.
 	s.peerNotifier = peernotifier.New()
@@ -2911,6 +2921,33 @@ func (s *server) createNewHiddenService() error {
 	return nil
 }
 
+func (s *server) sendBackupToPeer(data []byte, multi *chanbackup.Multi) error {
+	serverPeers := s.Peers()
+
+	// add conditional to not send to peers that give us error.
+	for _, p := range serverPeers {
+		p.SendBackupMtx.Lock()
+		if p.RemoteFeatures().HasFeature(
+			lnwire.OptionProvideStorageOptional) &&
+			p.SendBackup == 0 {
+
+			if err := p.SendMessage(false, &lnwire.PeerStorage{
+				Blob: data,
+			}); err != nil {
+				return fmt.Errorf("unable to send backup "+
+					"storage to peer(%v), received error: "+
+					"%v", p.PubKey(), err)
+			}
+			p.SendBackup = 1
+			p.LatestPeerBackup = multi
+
+		}
+		p.SendBackupMtx.Unlock()
+	}
+
+	return nil
+}
+
 // findChannel finds a channel given a public key and ChannelID. It is an
 // optimization that is quicker than seeking for a channel given only the
 // ChannelID.
@@ -3869,6 +3906,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		RequestAlias:           s.aliasMgr.RequestAlias,
 		AddLocalAlias:          s.aliasMgr.AddLocalAlias,
 		Quit:                   s.quit,
+		PeerStorage:            s.PeerBackup,
 	}
 
 	copy(pCfg.PubKeyBytes[:], peerAddr.IdentityKey.SerializeCompressed())
@@ -3880,6 +3918,17 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	//  * also mark last-seen, do it one single transaction?
 
 	s.addPeer(p)
+
+	backup := p.PeerBackup.GetPeerBackup(p.Addr)
+	if backup != nil {
+		err := p.SendMessage(backup)
+
+		if err != nil {
+			srvrLog.Errorf("unable to send backup to peer "+
+				"%v", err)
+			return
+		}
+	}
 
 	// Once we have successfully added the peer to the server, we can
 	// delete the previous error buffer from the server's map of error
