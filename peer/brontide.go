@@ -74,6 +74,10 @@ const (
 
 	// ErrorBufferSize is the number of historic peer errors that we store.
 	ErrorBufferSize = 10
+
+	// peerStorageDelay is the required for a peer to stay before acking a
+	// YourPeerStorageMessage. This required to reduce spamming.
+	peerStorageDelay = 2 * time.Second
 )
 
 var (
@@ -135,6 +139,17 @@ type ChannelCloseUpdate struct {
 type TimestampedError struct {
 	Error     error
 	Timestamp time.Time
+}
+
+// BackupPeerStorage is an interface representing the struture enabling the node
+// to carry out operations to store other peer's data and backup its own as
+// as well.
+type BackupPeerStorage interface {
+	VerifyBackup(data []byte, latestPeerBackup []byte) (error,
+		bool)
+	StorePeerBackup(data []byte, peerAddr string) ([]byte, error)
+	RetrieveBackupForPeer(perAddr string) []byte
+	PrunePeerStorage(peerAddrs []string) error
 }
 
 // Config defines configuration fields that are necessary for a peer object
@@ -365,6 +380,10 @@ type Config struct {
 
 	// Quit is the server's quit channel. If this is closed, we halt operation.
 	Quit chan struct{}
+
+	// PeerStorage enables us to store peer's encrypted data as well as
+	// store ours with the peers as well.
+	PeerStorage BackupPeerStorage
 }
 
 // Brontide is an active peer on the Lightning Network. This struct is responsible
@@ -488,6 +507,16 @@ type Brontide struct {
 
 	// log is a peer-specific logging instance.
 	log btclog.Logger
+
+	// SendBackup indicates if to send back up to this field.
+	SendBackup int
+
+	// LatestPeerBackup is the latest backup we have stored with a peer.
+	LatestPeerBackup []byte
+
+	// SendBackupMtx provides a concurrency safe way to update the
+	// `sendBackup` field as well as `LatestPeerBackup` field.
+	SendBackupMtx sync.RWMutex
 }
 
 // A compile-time check to ensure that Brontide satisfies the lnpeer.Peer interface.
@@ -1726,7 +1755,10 @@ out:
 				p.storeError(err)
 				p.log.Errorf("%v", err)
 			}
-
+		case *lnwire.PeerStorage:
+			p.handlePeerStorageMessage(msg)
+		case *lnwire.YourPeerStorage:
+			p.handleYourPeerStorageMessage(msg)
 		default:
 			// If the message we received is unknown to us, store
 			// the type to track the failure.
@@ -4017,6 +4049,52 @@ func (p *Brontide) handleRemovePendingChannel(req *newChannelMsg) {
 	// Remove the record of this pending channel.
 	p.activeChannels.Delete(chanID)
 	p.addedChannels.Delete(chanID)
+}
+
+// handlePeerStorageMessage `PeerStorage` messages. It stores the data and waits
+// for `peerSrorageDelay` time before sending back the data was stored as a form
+// of ack.
+func (p *Brontide) handlePeerStorageMessage(msg *lnwire.PeerStorage) {
+	latestBlob, err := p.cfg.PeerStorage.StorePeerBackup(msg.Blob, p.
+		String())
+	if err != nil {
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+		return
+	}
+
+	time.AfterFunc(peerStorageDelay, func() {
+		err := p.SendMessage(true, &lnwire.YourPeerStorage{
+			Blob: latestBlob,
+		})
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+	})
+
+}
+
+func (p *Brontide) handleYourPeerStorageMessage(msg *lnwire.YourPeerStorage) {
+
+	if p.LatestPeerBackup == nil {
+		err, verified := p.cfg.PeerStorage.VerifyBackup(msg.Blob, p.
+			LatestPeerBackup)
+
+		if err != nil {
+			p.storeError(err)
+			p.log.Errorf("%v", err)
+			return
+		}
+
+		if !verified {
+			p.log.Warnf("your peer storage from %v failed "+
+				"verification.", p.String())
+			return
+		}
+	}
+	p.SendBackupMtx.Lock()
+	p.SendBackup = 0
+	p.LatestPeerBackup = msg.Blob
+	p.SendBackupMtx.Unlock()
 }
 
 // sendLinkUpdateMsg sends a message that updates the channel to the
