@@ -1495,6 +1495,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 	s.chanSubSwapper, err = chanbackup.NewSubSwapper(
 		startingChans, chanNotifier, s.cc.KeyRing, backupFile,
+		s.sendBackupToPeer,
 	)
 	if err != nil {
 		return nil, err
