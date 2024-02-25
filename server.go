@@ -101,6 +101,8 @@ const (
 	// multiAddrConnectionStagger is the number of seconds to wait between
 	// attempting to a peer with each of its advertised addresses.
 	multiAddrConnectionStagger = 10 * time.Second
+
+	minChainBlocksForWipe = 2016
 )
 
 var (
@@ -322,6 +324,8 @@ type server struct {
 	livenessMonitor *healthcheck.Monitor
 
 	customMessageServer *subscribe.Server
+
+	peerBackup peer.BackupPeerStorage
 
 	quit chan struct{}
 
@@ -1495,6 +1499,18 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, err
 	}
+
+	peerBackup, err := chanbackup.NewPeerBackup(&chanbackup.
+		PeerBackupConfig{
+		Keychain: s.cc.KeyRing,
+		Swapper:  s.chanSubSwapper,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	s.peerBackup = peerBackup
 
 	// Assemble a peer notifier which will provide clients with subscriptions
 	// to peer online and offline events.
@@ -3422,6 +3438,80 @@ func (s *server) findPeerByPubStr(pubStr string) (*peer.Brontide, error) {
 	}
 
 	return peer, nil
+}
+
+func (s *server) sendBackupToPeer(data []byte) error {
+	serverPeers := s.Peers()
+
+	if len(data) > lnwire.MaxPeerStorageBytes {
+		data = data[:lnwire.MaxPeerStorageBytes+1]
+	}
+
+	for _, p := range serverPeers {
+		p.SendBackupMtx.Lock()
+		if p.RemoteFeatures().HasFeature(
+			lnwire.OptionProvideStorageOptional) &&
+			p.SendBackup == 0 {
+
+			if err := p.SendMessage(false, &lnwire.PeerStorage{
+				Blob: data,
+			}); err != nil {
+				return fmt.Errorf("unable to send backup "+
+					"storage to peer(%v), received error: "+
+					"%v", p.PubKey(), err)
+			}
+			p.SendBackup = 1
+			p.LatestPeerBackup = data
+
+		}
+		p.SendBackupMtx.Unlock()
+	}
+
+	return nil
+}
+
+func (s *server) prunePeerBackup(data []byte) error {
+	channels, err := s.chanStateDB.FetchClosedChannels(false)
+	if err != nil {
+		return err
+	}
+
+	var peerBackupToDelete []string
+	for _, channel := range channels {
+		p, err := s.FindPeer(channel.RemotePub)
+		if err != nil {
+			return err
+		}
+
+		bestHeight, err := s.cc.BestBlockTracker.BestHeight()
+
+		if err != nil {
+			return err
+		}
+		if len(s.peerBackup.RetrieveBackupForPeer(p.String())) > 0 &&
+			channel.CloseHeight+minChainBlocksForWipe >=
+				bestHeight {
+
+			peerBackupToDelete = append(peerBackupToDelete, p.
+				String())
+		}
+	}
+
+	return s.peerBackup.PrunePeerStorage(peerBackupToDelete)
+}
+
+func (s *server) retrievePeerBackup() []byte {
+	serverPeers := s.Peers()
+
+	for _, p := range serverPeers {
+		p.SendBackupMtx.Lock()
+		if p.LatestPeerBackup != nil {
+			return p.LatestPeerBackup
+		}
+		p.SendBackupMtx.Unlock()
+	}
+
+	return nil
 }
 
 // nextPeerBackoff computes the next backoff duration for a peer's pubkey using
