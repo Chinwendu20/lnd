@@ -3981,6 +3981,18 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	// buffers.
 	delete(s.peerErrors, pkStr)
 
+	backup := s.peerBackup.RetrieveBackupForPeer(p.String())
+	if backup != nil {
+		err := p.SendMessage(false, lnwire.NewYourPeerStorageMsg(
+			backup))
+
+		if err != nil {
+			srvrLog.Errorf("unable to send backup to peer "+
+				"%v", err)
+			return
+		}
+	}
+
 	// Dispatch a goroutine to asynchronously start the peer. This process
 	// includes sending and receiving Init messages, which would be a DOS
 	// vector if we held the server's mutex throughout the procedure.
