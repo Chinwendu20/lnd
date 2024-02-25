@@ -96,3 +96,19 @@ func DShortChannelID(r io.Reader, val interface{}, buf *[8]byte,
 	}
 	return tlv.NewTypeForDecodingErr(val, "lnwire.ShortChannelID", l, 8)
 }
+
+func (c ShortChannelID) DeepEqual(id ShortChannelID) bool {
+	if c.BlockHeight != id.BlockHeight {
+		return false
+	}
+
+	if c.TxIndex != id.TxIndex {
+		return false
+	}
+
+	if c.TxPosition != id.TxPosition {
+		return false
+	}
+
+	return true
+}

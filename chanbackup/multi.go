@@ -188,4 +188,41 @@ func (p *PackedMulti) Unpack(keyRing keychain.KeyRing) (*Multi, error) {
 	return &m, nil
 }
 
+func (p Multi) DeepEqual(backup *Multi) bool {
+	if p.Version != backup.Version {
+		return false
+	}
+
+	if len(p.StaticBackups) != len(backup.StaticBackups) {
+		return false
+	}
+
+	mapSCBToChanID := make(map[lnwire.ShortChannelID]Single)
+	for _, single := range p.StaticBackups {
+		mapSCBToChanID[single.ShortChannelID] = single
+	}
+
+	mapSCBToChanID2 := make(map[lnwire.ShortChannelID]Single)
+	for _, single := range backup.StaticBackups {
+		mapSCBToChanID2[single.ShortChannelID] = single
+	}
+
+	for id, single := range mapSCBToChanID {
+		single2, ok := mapSCBToChanID2[id]
+		if !ok {
+			return false
+		}
+
+		check := single.DeepEqual(single2)
+
+		if !check {
+			return false
+		}
+
+		delete(mapSCBToChanID, id)
+	}
+
+	return true
+}
+
 // TODO(roasbsef): fuzz parsing

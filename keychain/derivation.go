@@ -291,5 +291,30 @@ type SingleKeyECDH interface {
 	ECDH(pubKey *btcec.PublicKey) ([32]byte, error)
 }
 
+func (k KeyLocator) DeepEqual(locator KeyLocator) bool {
+	if k.Family != locator.Family {
+		return false
+	}
+
+	if k.Index != locator.Index {
+		return false
+	}
+
+	return true
+}
+
+func (d KeyDescriptor) DeepEqual(key KeyDescriptor) bool {
+
+	if !d.KeyLocator.DeepEqual(key.KeyLocator) {
+		return false
+	}
+
+	if d.PubKey != key.PubKey {
+		return false
+	}
+
+	return true
+}
+
 // TODO(roasbeef): extend to actually support scalar mult of key?
 //  * would allow to push in initial handshake auth into interface as well

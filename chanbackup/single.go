@@ -608,4 +608,93 @@ func (p PackedSingles) Unpack(keyRing keychain.KeyRing) ([]Single, error) {
 	return backups, nil
 }
 
+func (s *Single) DeepEqual(single2 Single) bool {
+	if s.Version != single2.Version {
+		return false
+	}
+
+	if s.IsInitiator != single2.IsInitiator {
+		return false
+	}
+
+	if s.ChainHash != single2.ChainHash {
+		return false
+	}
+
+	if !OutpointDeepEqual(s.FundingOutpoint, single2.FundingOutpoint) {
+		return false
+	}
+
+	if !s.ShortChannelID.DeepEqual(single2.ShortChannelID) {
+		return false
+	}
+
+	if s.RemoteNodePub != single2.RemoteNodePub {
+		return false
+	}
+
+	if len(s.Addresses) != len(single2.Addresses) {
+		return false
+	}
+
+	mapAddrToNet := make(map[string]net.Addr)
+	mapAddrToNet2 := make(map[string]net.Addr)
+	for _, addr := range s.Addresses {
+		mapAddrToNet[addr.String()] = addr
+	}
+
+	for _, addr := range single2.Addresses {
+		mapAddrToNet2[addr.String()] = addr
+	}
+
+	for strAddr, address := range mapAddrToNet {
+		address2, ok := mapAddrToNet2[strAddr]
+
+		if !ok {
+			return false
+		}
+
+		if address != address2 {
+			return false
+		}
+
+		delete(mapAddrToNet2, strAddr)
+
+	}
+
+	if s.Capacity != single2.Capacity {
+		return false
+	}
+
+	if !s.LocalChanCfg.DeepEqual(single2.LocalChanCfg) {
+		return false
+	}
+
+	if !s.RemoteChanCfg.DeepEqual(single2.RemoteChanCfg) {
+		return false
+	}
+
+	if !s.ShaChainRootDesc.DeepEqual(single2.ShaChainRootDesc) {
+		return false
+	}
+
+	if s.LeaseExpiry != single2.LeaseExpiry {
+		return false
+	}
+
+	return true
+}
+
+func OutpointDeepEqual(outpoint wire.OutPoint, outpoint2 wire.OutPoint) bool {
+	if outpoint.Index != outpoint2.Index {
+		return false
+	}
+
+	if outpoint.Hash != outpoint2.Hash {
+		return false
+	}
+
+	return true
+}
+
 // TODO(roasbeef): make codec package?
