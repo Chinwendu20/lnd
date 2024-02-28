@@ -2523,6 +2523,43 @@ func (h *HarnessTest) AssertWalletAccountBalance(hn *node.HarnessNode,
 	require.NoError(h, err, "timeout checking wallet account balance")
 }
 
+// AssertConfWalletBalanceLT asserts that the confirmed wallet balance and the
+// total value of confirmed UTXOs for a given account are both less than a
+// specified amount. It queries the wallet balance and confirmed UTXOs,
+// comparing these values to the expected balance, and returns an error if the
+// balance is not less than the expected amount or if a timeout occurs during
+// verification.
+func (h *HarnessTest) AssertConfWalletBalanceLT(hn *node.HarnessNode,
+	account string, confirmedBalance int64) {
+
+	err := wait.NoError(func() error {
+		balanceResp := hn.RPC.WalletBalance()
+		require.Contains(h, balanceResp.AccountBalance, account)
+		accountBalance := balanceResp.AccountBalance[account]
+
+		// Check confirmed balance.
+		if accountBalance.ConfirmedBalance >= confirmedBalance {
+			return fmt.Errorf("expected confirmed balance less "+
+				"than %v, but got %v", confirmedBalance,
+				accountBalance.ConfirmedBalance)
+		}
+
+		utxos := h.GetUTXOsConfirmed(hn, account)
+		var totalConfirmedVal int64
+		for _, utxo := range utxos {
+			totalConfirmedVal += utxo.AmountSat
+		}
+		if totalConfirmedVal >= confirmedBalance {
+			return fmt.Errorf("expected confirmed balance less "+
+				"than %v, but got %v", confirmedBalance,
+				accountBalance.ConfirmedBalance)
+		}
+
+		return nil
+	}, DefaultTimeout)
+	require.NoError(h, err, "timeout checking wallet account balance")
+}
+
 // AssertClosingTxInMempool assert that the closing transaction of the given
 // channel point can be found in the mempool. If the channel has anchors, it
 // will assert the anchor sweep tx is also in the mempool.
