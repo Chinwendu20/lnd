@@ -730,6 +730,21 @@ func (p *Brontide) Start() error {
 		}
 	}
 
+	data, err := p.cfg.PeerDataStore.RetrievePeerData(p.cfg.Addr.
+		IdentityKey)
+
+	if err != nil {
+		return fmt.Errorf("unable to retrieve peer backup data: "+
+			"%v", err)
+	}
+
+	if err := p.writeMessage(&lnwire.YourPeerStorage{
+		Blob: data,
+	}); err != nil {
+		return fmt.Errorf("unable to send "+
+			"reestablish msg: %v", err)
+	}
+
 	err = p.pingManager.Start()
 	if err != nil {
 		return fmt.Errorf("could not start ping manager %w", err)
