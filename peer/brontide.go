@@ -3106,7 +3106,12 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 		// TODO(roasbeef): no longer need with newer beach logic?
 		p.log.Infof("ChannelPoint(%v) has been breached, wiping "+
 			"channel", req.ChanPoint)
-		p.WipeChannel(req.ChanPoint)
+		err := p.WipeChannel(req.ChanPoint)
+		if err != nil {
+			p.log.Errorf(err.Error())
+			req.Err <- err
+			return
+		}
 	}
 }
 
@@ -3138,7 +3143,10 @@ func (p *Brontide) handleLinkFailure(failure linkFailureReport) {
 	// link and cancel back any adds in its mailboxes such that we can
 	// safely force close without the link being added again and updates
 	// being applied.
-	p.WipeChannel(&failure.chanPoint)
+	err := p.WipeChannel(&failure.chanPoint)
+	if err != nil {
+		p.log.Errorf("error wiping channel: %v", err)
+	}
 
 	// If the error encountered was severe enough, we'll now force close
 	// the channel to prevent reading it to the switch in the future.
@@ -3238,7 +3246,13 @@ func (p *Brontide) finalizeChanClosure(chanCloser *chancloser.ChanCloser) {
 
 	// First, we'll clear all indexes related to the channel in question.
 	chanPoint := chanCloser.Channel().ChannelPoint()
-	p.WipeChannel(chanPoint)
+	err := p.WipeChannel(chanPoint)
+	if err != nil {
+		if closeReq != nil {
+			p.log.Error(err)
+			closeReq.Err <- err
+		}
+	}
 
 	// Also clear the activeChanCloses map of this channel.
 	cid := lnwire.NewChanIDFromOutPoint(chanPoint)
@@ -3329,15 +3343,29 @@ func WaitForChanToClose(bestHeight uint32, notifier chainntnfs.ChainNotifier,
 }
 
 // WipeChannel removes the passed channel point from all indexes associated with
-// the peer and the switch.
-func (p *Brontide) WipeChannel(chanPoint *wire.OutPoint) {
+// the peer and the switch and marks any associated storage we might have with
+// the peer for delete.
+func (p *Brontide) WipeChannel(chanPoint *wire.OutPoint) error {
 	chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
 
 	p.activeChannels.Delete(chanID)
 
+	if p.RemoteFeatures().HasFeature(lnwire.OptionWantStorageOptional) &&
+		p.activeChannels.Len() == 0 {
+
+		err := p.cfg.PeerDataStore.MarkForDelete(
+			p.cfg.Addr.IdentityKey)
+
+		if err != nil {
+			return err
+		}
+	}
+
 	// Instruct the HtlcSwitch to close this link as the channel is no
 	// longer active.
 	p.cfg.Switch.RemoveLink(chanID)
+
+	return nil
 }
 
 // handleInitMsg handles the incoming init message which contains global and
