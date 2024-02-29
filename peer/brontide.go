@@ -1793,6 +1793,8 @@ out:
 				p.storeError(err)
 				p.log.Errorf("%v", err)
 			}
+		case *lnwire.PeerStorage:
+			p.handlePeerStorageMessage(msg)
 
 		default:
 			// If the message we received is unknown to us, store
@@ -4100,6 +4102,28 @@ func (p *Brontide) handleRemovePendingChannel(req *newChannelMsg) {
 	// Remove the record of this pending channel.
 	p.activeChannels.Delete(chanID)
 	p.addedChannels.Delete(chanID)
+}
+
+// handlePeerStorageMessage handles `PeerStorageMessage`, it stores the message
+// and sends it back to the peer as an ack.
+func (p *Brontide) handlePeerStorageMessage(msg *lnwire.PeerStorage) {
+	err := p.cfg.PeerDataStore.StorePeerData(msg.Blob, p.
+		cfg.Addr.IdentityKey)
+	if err != nil {
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+		return
+	}
+
+	err = p.SendMessage(true, &lnwire.YourPeerStorage{
+		Blob: []byte(msg.Blob),
+	})
+
+	if err != nil {
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+	}
+
 }
 
 // sendLinkUpdateMsg sends a message that updates the channel to the
