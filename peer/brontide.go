@@ -138,6 +138,14 @@ type TimestampedError struct {
 	Timestamp time.Time
 }
 
+// PeerDataStore is an interface representing the struture enabling the node
+// to carry out operations to store other peer's data.
+type PeerDataStore interface {
+	StorePeerData(data []byte, peerPub *btcec.PublicKey) error
+	MarkForDelete(peerPub *btcec.PublicKey) error
+	RetrievePeerData(peerPub *btcec.PublicKey) ([]byte, error)
+}
+
 // Config defines configuration fields that are necessary for a peer object
 // to function.
 type Config struct {
@@ -366,6 +374,10 @@ type Config struct {
 
 	// Quit is the server's quit channel. If this is closed, we halt operation.
 	Quit chan struct{}
+
+	// PeerDataStore is the storage layer that helps us store other peer's
+	// data.
+	PeerDataStore PeerDataStore
 }
 
 // Brontide is an active peer on the Lightning Network. This struct is responsible
@@ -716,6 +728,21 @@ func (p *Brontide) Start() error {
 					"reestablish msg: %v", err)
 			}
 		}
+	}
+
+	data, err := p.cfg.PeerDataStore.RetrievePeerData(p.cfg.Addr.
+		IdentityKey)
+
+	if err != nil {
+		return fmt.Errorf("unable to retrieve peer backup data: "+
+			"%v", err)
+	}
+
+	if err := p.writeMessage(&lnwire.YourPeerStorage{
+		Blob: data,
+	}); err != nil {
+		return fmt.Errorf("unable to send "+
+			"reestablish msg: %v", err)
 	}
 
 	err = p.pingManager.Start()
@@ -1781,6 +1808,8 @@ out:
 				p.storeError(err)
 				p.log.Errorf("%v", err)
 			}
+		case *lnwire.PeerStorage:
+			p.handlePeerStorageMessage(msg)
 
 		default:
 			// If the message we received is unknown to us, store
@@ -3077,7 +3106,12 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 		// TODO(roasbeef): no longer need with newer beach logic?
 		p.log.Infof("ChannelPoint(%v) has been breached, wiping "+
 			"channel", req.ChanPoint)
-		p.WipeChannel(req.ChanPoint)
+		err := p.WipeChannel(req.ChanPoint)
+		if err != nil {
+			p.log.Errorf(err.Error())
+			req.Err <- err
+			return
+		}
 	}
 }
 
@@ -3109,7 +3143,10 @@ func (p *Brontide) handleLinkFailure(failure linkFailureReport) {
 	// link and cancel back any adds in its mailboxes such that we can
 	// safely force close without the link being added again and updates
 	// being applied.
-	p.WipeChannel(&failure.chanPoint)
+	err := p.WipeChannel(&failure.chanPoint)
+	if err != nil {
+		p.log.Errorf("error wiping channel: %v", err)
+	}
 
 	// If the error encountered was severe enough, we'll now force close
 	// the channel to prevent reading it to the switch in the future.
@@ -3209,7 +3246,13 @@ func (p *Brontide) finalizeChanClosure(chanCloser *chancloser.ChanCloser) {
 
 	// First, we'll clear all indexes related to the channel in question.
 	chanPoint := chanCloser.Channel().ChannelPoint()
-	p.WipeChannel(chanPoint)
+	err := p.WipeChannel(chanPoint)
+	if err != nil {
+		if closeReq != nil {
+			p.log.Error(err)
+			closeReq.Err <- err
+		}
+	}
 
 	// Also clear the activeChanCloses map of this channel.
 	cid := lnwire.NewChanIDFromOutPoint(chanPoint)
@@ -3300,15 +3343,29 @@ func WaitForChanToClose(bestHeight uint32, notifier chainntnfs.ChainNotifier,
 }
 
 // WipeChannel removes the passed channel point from all indexes associated with
-// the peer and the switch.
-func (p *Brontide) WipeChannel(chanPoint *wire.OutPoint) {
+// the peer and the switch and marks any associated storage we might have with
+// the peer for delete.
+func (p *Brontide) WipeChannel(chanPoint *wire.OutPoint) error {
 	chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
 
 	p.activeChannels.Delete(chanID)
 
+	if p.RemoteFeatures().HasFeature(lnwire.OptionWantStorageOptional) &&
+		p.activeChannels.Len() == 0 {
+
+		err := p.cfg.PeerDataStore.MarkForDelete(
+			p.cfg.Addr.IdentityKey)
+
+		if err != nil {
+			return err
+		}
+	}
+
 	// Instruct the HtlcSwitch to close this link as the channel is no
 	// longer active.
 	p.cfg.Switch.RemoveLink(chanID)
+
+	return nil
 }
 
 // handleInitMsg handles the incoming init message which contains global and
@@ -4088,6 +4145,28 @@ func (p *Brontide) handleRemovePendingChannel(req *newChannelMsg) {
 	// Remove the record of this pending channel.
 	p.activeChannels.Delete(chanID)
 	p.addedChannels.Delete(chanID)
+}
+
+// handlePeerStorageMessage handles `PeerStorageMessage`, it stores the message
+// and sends it back to the peer as an ack.
+func (p *Brontide) handlePeerStorageMessage(msg *lnwire.PeerStorage) {
+	err := p.cfg.PeerDataStore.StorePeerData(msg.Blob, p.
+		cfg.Addr.IdentityKey)
+	if err != nil {
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+		return
+	}
+
+	err = p.SendMessage(true, &lnwire.YourPeerStorage{
+		Blob: []byte(msg.Blob),
+	})
+
+	if err != nil {
+		p.storeError(err)
+		p.log.Errorf("%v", err)
+	}
+
 }
 
 // sendLinkUpdateMsg sends a message that updates the channel to the

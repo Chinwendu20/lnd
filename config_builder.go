@@ -866,6 +866,10 @@ type DatabaseInstances struct {
 	// configuration.
 	TowerServerDB watchtower.DB
 
+	// PeerStorageDB is the database that stores data peer shares with us
+	// for backup.
+	PeerStorageDB kvdb.Backend
+
 	// WalletDB is the configuration for loading the wallet database using
 	// the btcwallet's loader.
 	WalletDB btcwallet.LoaderOption
@@ -923,10 +927,11 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 	// state DB point to the same local or remote DB and the same namespace
 	// within that DB.
 	dbs := &DatabaseInstances{
-		HeightHintDB: databaseBackends.HeightHintDB,
-		MacaroonDB:   databaseBackends.MacaroonDB,
-		DecayedLogDB: databaseBackends.DecayedLogDB,
-		WalletDB:     databaseBackends.WalletDB,
+		HeightHintDB:  databaseBackends.HeightHintDB,
+		MacaroonDB:    databaseBackends.MacaroonDB,
+		DecayedLogDB:  databaseBackends.DecayedLogDB,
+		WalletDB:      databaseBackends.WalletDB,
+		PeerStorageDB: databaseBackends.PeerStorageDB,
 	}
 	cleanUp := func() {
 		// We can just close the returned close functions directly. Even

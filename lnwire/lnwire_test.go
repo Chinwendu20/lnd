@@ -1316,6 +1316,34 @@ func TestLightningWireProtocol(t *testing.T) {
 
 			v[0] = reflect.ValueOf(req)
 		},
+		MsgPeerStorage: func(v []reflect.Value, r *rand.Rand) {
+			data := make([]byte, 2)
+			_, err := r.Read(data)
+
+			if err != nil {
+				t.Fatalf("unable to generate peer "+
+					"storage blob: %v", err)
+			}
+
+			req, err := NewPeerStorageMsg(data)
+			if err != nil {
+				t.Fatalf("error generating peeer storage "+
+					"message %v", err)
+			}
+			v[0] = reflect.ValueOf(*req)
+		},
+		MsgYourPeerStorage: func(v []reflect.Value, r *rand.Rand) {
+			data := make([]byte, 2)
+			_, err := r.Read(data)
+
+			if err != nil {
+				t.Fatalf("unable to generate peer "+
+					"storage blob: %v", err)
+			}
+
+			req := NewYourPeerStorageMsg(data)
+			v[0] = reflect.ValueOf(*req)
+		},
 	}
 
 	// With the above types defined, we'll now generate a slice of
@@ -1535,6 +1563,18 @@ func TestLightningWireProtocol(t *testing.T) {
 		{
 			msgType: MsgClosingSig,
 			scenario: func(m ClosingSig) bool {
+				return mainScenario(&m)
+			},
+		},
+		{
+			msgType: MsgPeerStorage,
+			scenario: func(m PeerStorage) bool {
+				return mainScenario(&m)
+			},
+		},
+		{
+			msgType: MsgYourPeerStorage,
+			scenario: func(m YourPeerStorage) bool {
 				return mainScenario(&m)
 			},
 		},

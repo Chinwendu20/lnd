@@ -323,6 +323,8 @@ type server struct {
 
 	customMessageServer *subscribe.Server
 
+	kvdbPeerStorage *kvdbPeerStorage
+
 	quit chan struct{}
 
 	wg sync.WaitGroup
@@ -1492,6 +1494,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, err
 	}
 
+	s.kvdbPeerStorage, err = newKvdbPeerStorage(&peerStorageConfig{
+		chainNotifier: s.cc.ChainNotifier,
+		db:            dbs.PeerStorageDB,
+		blockViewer:   s.cc.BestBlockTracker,
+	})
 	// Assemble a peer notifier which will provide clients with subscriptions
 	// to peer online and offline events.
 	s.peerNotifier = peernotifier.New()
@@ -3868,6 +3875,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		GetAliases:             s.aliasMgr.GetAliases,
 		RequestAlias:           s.aliasMgr.RequestAlias,
 		AddLocalAlias:          s.aliasMgr.AddLocalAlias,
+		PeerDataStore:          s.kvdbPeerStorage,
 		Quit:                   s.quit,
 	}
 

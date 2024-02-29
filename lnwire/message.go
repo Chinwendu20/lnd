@@ -57,6 +57,8 @@ const (
 	MsgReplyChannelRange                   = 264
 	MsgGossipTimestampRange                = 265
 	MsgKickoffSig                          = 777
+	MsgPeerStorage                         = 7
+	MsgYourPeerStorage                     = 9
 )
 
 // ErrorEncodeMessage is used when failed to encode the message payload.
@@ -152,6 +154,10 @@ func (t MessageType) String() string {
 		return "ClosingComplete"
 	case MsgClosingSig:
 		return "ClosingSig"
+	case MsgPeerStorage:
+		return "Peer Storage"
+	case MsgYourPeerStorage:
+		return "Your Peer Storage"
 	default:
 		return "<unknown>"
 	}
@@ -266,6 +272,10 @@ func makeEmptyMessage(msgType MessageType) (Message, error) {
 		msg = &ClosingComplete{}
 	case MsgClosingSig:
 		msg = &ClosingSig{}
+	case MsgPeerStorage:
+		msg = &PeerStorage{}
+	case MsgYourPeerStorage:
+		msg = &YourPeerStorage{}
 	default:
 		// If the message is not within our custom range and has not
 		// specifically been overridden, return an unknown message.
