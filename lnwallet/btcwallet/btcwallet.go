@@ -970,16 +970,13 @@ func (b *BtcWallet) ImportTaprootScript(scope waddrmgr.KeyScope,
 	)
 }
 
-// SendOutputs funds, signs, and broadcasts a Bitcoin transaction paying out to
-// the specified outputs. In the case the wallet has insufficient funds, or the
-// outputs are non-standard, a non-nil error will be returned.
-//
-// NOTE: This method requires the global coin selection lock to be held.
-//
-// This is a part of the WalletController interface.
-func (b *BtcWallet) SendOutputs(outputs []*wire.TxOut,
+// sendOutputs encapsulates common logic for funding, signing,
+// and broadcasting bitcoin transactions to the specified outputs.
+func (b *BtcWallet) sendOutputs(
+	outputs []*wire.TxOut,
 	feeRate chainfee.SatPerKWeight, minConfs int32, label string,
-	strategy base.CoinSelectionStrategy) (*wire.MsgTx, error) {
+	strategy base.CoinSelectionStrategy, selectedUtxos []wire.OutPoint) (
+	*wire.MsgTx, error) {
 
 	// Convert our fee rate from sat/kw to sat/kb since it's required by
 	// SendOutputs.
@@ -995,9 +992,52 @@ func (b *BtcWallet) SendOutputs(outputs []*wire.TxOut,
 		return nil, lnwallet.ErrInvalidMinconf
 	}
 
+	if selectedUtxos != nil {
+		return b.wallet.SendOutputsWithInput(
+			outputs, nil, defaultAccount, minConfs,
+			feeSatPerKB, b.cfg.CoinSelectionStrategy, label,
+			selectedUtxos,
+		)
+	}
+
 	return b.wallet.SendOutputs(
 		outputs, nil, defaultAccount, minConfs, feeSatPerKB,
 		strategy, label,
+	)
+}
+
+// SendOutputsWithInput funds, signs, and broadcasts a Bitcoin transaction using
+// selected utxos as input paying out to the specified outputs. In the case the
+// wallet has insufficient funds, or the outputs are non-standard, a non-nil
+// error will be returned.
+//
+// NOTE: This method requires the global coin selection lock to be held.
+//
+// This is a part of the WalletController interface.
+func (b *BtcWallet) SendOutputsWithInput(
+	outputs []*wire.TxOut, feeRate chainfee.SatPerKWeight, minConfs int32,
+	label string, strategy base.CoinSelectionStrategy,
+	selectedUtxos []wire.OutPoint) (*wire.MsgTx, error) {
+
+	return b.sendOutputs(
+		outputs, feeRate, minConfs, label, strategy, selectedUtxos,
+	)
+}
+
+// SendOutputs funds, signs, and broadcasts a Bitcoin transaction paying
+// out to the specified outputs. In the case the wallet has insufficient
+// funds, or the outputs are non-standard, an error will be returned.
+//
+// NOTE: This method requires the global coin selection lock to be held.
+//
+// This is a part of the WalletController interface.
+func (b *BtcWallet) SendOutputs(
+	outputs []*wire.TxOut, feeRate chainfee.SatPerKWeight, minConfs int32,
+	label string, strategy base.CoinSelectionStrategy) (*wire.MsgTx,
+	error) {
+
+	return b.sendOutputs(
+		outputs, feeRate, minConfs, label, strategy, nil,
 	)
 }
 
@@ -1016,8 +1056,9 @@ func (b *BtcWallet) SendOutputs(outputs []*wire.TxOut,
 // This is a part of the WalletController interface.
 func (b *BtcWallet) CreateSimpleTx(outputs []*wire.TxOut,
 	feeRate chainfee.SatPerKWeight, minConfs int32,
-	strategy base.CoinSelectionStrategy,
-	dryRun bool) (*txauthor.AuthoredTx, error) {
+	strategy base.CoinSelectionStrategy, dryRun bool,
+	optFuncs ...base.TxCreateOption) (
+	*txauthor.AuthoredTx, error) {
 
 	// The fee rate is passed in using units of sat/kw, so we'll convert
 	// this to sat/KB as the CreateSimpleTx method requires this unit.
@@ -1049,7 +1090,7 @@ func (b *BtcWallet) CreateSimpleTx(outputs []*wire.TxOut,
 
 	return b.wallet.CreateSimpleTx(
 		nil, defaultAccount, outputs, minConfs, feeSatPerKB,
-		strategy, dryRun,
+		strategy, dryRun, optFuncs...,
 	)
 }
 
