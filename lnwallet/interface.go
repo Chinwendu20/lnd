@@ -348,6 +348,19 @@ type WalletController interface {
 		minConfs int32, label string,
 		strategy base.CoinSelectionStrategy) (*wire.MsgTx, error)
 
+	// SendOutputsWithInput funds, signs, and broadcasts a Bitcoin
+	// transaction using selected utxos as input paying out to the specified
+	// outputs. In the case the wallet has insufficient funds, or the
+	// outputs are non-standard, a non-nil error will be returned.
+	//
+	// NOTE: This method requires the global coin selection lock to be held.
+	//
+	// This is a part of the WalletController interface.
+	SendOutputsWithInput(outputs []*wire.TxOut,
+		feeRate chainfee.SatPerKWeight, minConfs int32, label string,
+		strategy base.CoinSelectionStrategy,
+		selectedUtxos []wire.OutPoint) (*wire.MsgTx, error)
+
 	// CreateSimpleTx creates a Bitcoin transaction paying to the specified
 	// outputs. The transaction is not broadcasted to the network. In the
 	// case the wallet has insufficient funds, or the outputs are
@@ -362,7 +375,8 @@ type WalletController interface {
 	// NOTE: This method requires the global coin selection lock to be held.
 	CreateSimpleTx(outputs []*wire.TxOut, feeRate chainfee.SatPerKWeight,
 		minConfs int32, strategy base.CoinSelectionStrategy,
-		dryRun bool) (*txauthor.AuthoredTx, error)
+		dryRun bool, optFuncs ...base.TxCreateOption) (
+		*txauthor.AuthoredTx, error)
 
 	// GetTransactionDetails returns a detailed description of a transaction
 	// given its transaction hash.

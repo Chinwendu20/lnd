@@ -139,6 +139,14 @@ func (w *WalletController) ImportTaprootScript(waddrmgr.KeyScope,
 	return nil, nil
 }
 
+// SendOutputsWithInput currently returns dummy values.
+func (w *WalletController) SendOutputsWithInput([]*wire.TxOut,
+	chainfee.SatPerKWeight, int32, string, base.CoinSelectionStrategy,
+	[]wire.OutPoint) (*wire.MsgTx, error) {
+
+	return nil, nil
+}
+
 // SendOutputs currently returns dummy values.
 func (w *WalletController) SendOutputs([]*wire.TxOut,
 	chainfee.SatPerKWeight, int32, string,
@@ -149,8 +157,8 @@ func (w *WalletController) SendOutputs([]*wire.TxOut,
 
 // CreateSimpleTx currently returns dummy values.
 func (w *WalletController) CreateSimpleTx([]*wire.TxOut,
-	chainfee.SatPerKWeight, int32, base.CoinSelectionStrategy,
-	bool) (*txauthor.AuthoredTx, error) {
+	chainfee.SatPerKWeight, int32, base.CoinSelectionStrategy, bool,
+	...base.TxCreateOption) (*txauthor.AuthoredTx, error) {
 
 	return nil, nil
 }

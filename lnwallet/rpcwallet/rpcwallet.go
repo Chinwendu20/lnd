@@ -111,22 +111,28 @@ func (r *RPCKeyRing) NewAddress(addrType lnwallet.AddressType, change bool,
 	return r.WalletController.NewAddress(addrType, change, account)
 }
 
-// SendOutputs funds, signs, and broadcasts a Bitcoin transaction paying out to
-// the specified outputs. In the case the wallet has insufficient funds, or the
-// outputs are non-standard, a non-nil error will be returned.
-//
-// NOTE: This method requires the global coin selection lock to be held.
-//
-// NOTE: This is a part of the WalletController interface.
-//
-// NOTE: This method only signs with BIP49/84 keys.
-func (r *RPCKeyRing) SendOutputs(outputs []*wire.TxOut,
-	feeRate chainfee.SatPerKWeight, minConfs int32, label string,
-	strategy basewallet.CoinSelectionStrategy) (*wire.MsgTx, error) {
+// sendOutputs encapsulates common logic for funding, signing,
+// and broadcasting bitcoin transactions to the specified outputs.
+func (r *RPCKeyRing) sendOutputs(
+	outputs []*wire.TxOut, feeRate chainfee.SatPerKWeight, minConfs int32,
+	label string, strategy basewallet.CoinSelectionStrategy,
+	selectedUtxos []wire.OutPoint) (*wire.MsgTx, error) {
 
-	tx, err := r.WalletController.SendOutputs(
-		outputs, feeRate, minConfs, label, strategy,
+	var (
+		tx  *wire.MsgTx
+		err error
 	)
+
+	if len(selectedUtxos) == 0 {
+		tx, err = r.WalletController.SendOutputs(
+			outputs, feeRate, minConfs, label, strategy,
+		)
+	} else {
+		tx, err = r.WalletController.SendOutputsWithInput(
+			outputs, feeRate, minConfs, label,
+			strategy, selectedUtxos,
+		)
+	}
 	if err != nil && err != basewallet.ErrTxUnsigned {
 		return nil, err
 	}
@@ -183,6 +189,43 @@ func (r *RPCKeyRing) SendOutputs(outputs []*wire.TxOut,
 	}
 
 	return tx, r.WalletController.PublishTransaction(tx, label)
+}
+
+// SendOutputsWithInput funds, signs, and broadcasts a Bitcoin transaction using
+// selected utxos as input paying out to the specified outputs. In the case the
+// wallet has insufficient funds, or the outputs are non-standard, a non-nil
+// error will be returned.
+//
+// NOTE: This method requires the global coin selection lock to be held.
+//
+// This is a part of the WalletController interface.
+func (r *RPCKeyRing) SendOutputsWithInput(outputs []*wire.TxOut,
+	feeRate chainfee.SatPerKWeight, minConfs int32,
+	label string, strategy basewallet.CoinSelectionStrategy,
+	selectUtxos []wire.OutPoint) (*wire.MsgTx, error) {
+
+	return r.sendOutputs(
+		outputs, feeRate, minConfs, label, strategy, selectUtxos,
+	)
+}
+
+// SendOutputs funds, signs, and broadcasts a Bitcoin transaction paying out to
+// the specified outputs. In the case the wallet has insufficient funds, or the
+// outputs are non-standard, a non-nil error will be returned.
+//
+// NOTE: This method requires the global coin selection lock to be held.
+//
+// NOTE: This is a part of the WalletController interface.
+//
+// NOTE: This method only signs with BIP49/84 keys.
+func (r *RPCKeyRing) SendOutputs(outputs []*wire.TxOut,
+	feeRate chainfee.SatPerKWeight, minConfs int32,
+	label string, strategy basewallet.CoinSelectionStrategy) (
+	*wire.MsgTx, error) {
+
+	return r.sendOutputs(
+		outputs, feeRate, minConfs, label, strategy, nil,
+	)
 }
 
 // SignPsbt expects a partial transaction with all inputs and outputs fully
