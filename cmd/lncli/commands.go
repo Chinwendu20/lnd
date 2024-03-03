@@ -289,10 +289,11 @@ var sendCoinsCommand = cli.Command{
 		},
 		cli.BoolFlag{
 			Name: "sweepall",
-			Usage: "if set, then the amount field will be ignored, " +
-				"and the wallet will attempt to sweep all " +
-				"outputs within the wallet to the target " +
-				"address",
+			Usage: "if set, then the amount field should be " +
+				"unset. This indicates that the wallet will" +
+				" attempt to sweep all outputs within the " +
+				"wallet or all funds in select utxos, if " +
+				"supplied, to the target address",
 		},
 		cli.Int64Flag{
 			Name:  "amt",
@@ -331,6 +332,15 @@ var sendCoinsCommand = cli.Command{
 				"scripts",
 		},
 		coinSelectionStrategyFlag,
+		cli.StringSliceFlag{
+			Name: "utxo",
+			Usage: "a utxo specified as outpoint(tx:idx) which " +
+				"will be used as input for the transaction " +
+				"The selected utxos can either be entirely " +
+				"spent by specifying the sweepall flag or a " +
+				"specified amount can be spent in the utxo " +
+				"through the amt flag",
+		},
 		txLabelFlag,
 	},
 	Action: actionDecorator(sendCoins),
@@ -338,9 +348,10 @@ var sendCoinsCommand = cli.Command{
 
 func sendCoins(ctx *cli.Context) error {
 	var (
-		addr string
-		amt  int64
-		err  error
+		addr      string
+		amt       int64
+		err       error
+		outpoints []*lnrpc.OutPoint
 	)
 	ctxc := getContext()
 	args := ctx.Args()
@@ -418,6 +429,15 @@ func sendCoins(ctx *cli.Context) error {
 		displayAmt = balanceResponse.GetConfirmedBalance()
 	}
 
+	if ctx.IsSet("utxo") {
+		utxos := ctx.StringSlice("utxo")
+
+		outpoints, err = utxosToOutpoints(utxos)
+		if err != nil {
+			return fmt.Errorf("unable to decode utxos: %w", err)
+		}
+	}
+
 	// Ask for confirmation if we're on an actual terminal and the output is
 	// not being redirected to another command. This prevents existing shell
 	// scripts from breaking.
@@ -441,6 +461,7 @@ func sendCoins(ctx *cli.Context) error {
 		MinConfs:              minConfs,
 		SpendUnconfirmed:      minConfs == 0,
 		CoinSelectionStrategy: coinSelectionStrategy,
+		Outpoints:             outpoints,
 	}
 	txid, err := client.SendCoins(ctxc, req)
 	if err != nil {
