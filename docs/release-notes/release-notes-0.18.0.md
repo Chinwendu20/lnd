@@ -307,6 +307,8 @@ bitcoin peers' feefilter values into account](https://github.com/lightningnetwor
   add coin selection strategy option to the following on-chain RPC calls
   `EstimateFee`, `SendMany`, `SendCoins`, `BatchOpenChannel`, `SendOutputs`, and `FundPsbt`.
 
+* [Added `outpoints` to `SendCoinsRequest`](https://github.com/lightningnetwork/lnd/pull/8516).
+
 ## lncli Updates
 
 * [Documented all available `lncli`
@@ -329,6 +331,10 @@ bitcoin peers' feefilter values into account](https://github.com/lightningnetwor
  
 * The [`estimateroutefee`](https://github.com/lightningnetwork/lnd/pull/8136)
   subcommand now gives access to graph based and payment probe fee estimation.
+
+* [`sendcoins` now takes in an optional utxo flag](
+ https://github.com/lightningnetwork/lnd/pull/8516). This allows users to
+specify the coins that they want to use as inputs for the transaction.
 
 ## Code Health
 
