@@ -1332,7 +1332,7 @@ func (r *rpcServer) SendCoins(ctx context.Context,
 		sweepTxPkg, err := sweep.CraftSweepAllTx(
 			feePerKw, maxFeeRate, uint32(bestHeight), nil,
 			targetAddr, wallet, wallet, wallet.WalletController,
-			r.server.cc.Signer, minConfs,
+			r.server.cc.Signer, minConfs, nil,
 		)
 		if err != nil {
 			return nil, err
@@ -1386,7 +1386,7 @@ func (r *rpcServer) SendCoins(ctx context.Context,
 				feePerKw, maxFeeRate, uint32(bestHeight),
 				outputs, targetAddr, wallet, wallet,
 				wallet.WalletController,
-				r.server.cc.Signer, minConfs,
+				r.server.cc.Signer, minConfs, nil,
 			)
 			if err != nil {
 				return nil, err
