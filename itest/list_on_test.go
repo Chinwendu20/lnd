@@ -626,4 +626,12 @@ var allTestCases = []*lntest.TestCase{
 		Name:     "sweep commit output and anchor",
 		TestFunc: testSweepCommitOutputAndAnchor,
 	},
+	{
+		Name:     "coop close with external delivery",
+		TestFunc: testCoopCloseWithExternalDelivery,
+	},
+	{
+		Name:     "send coins with select utxos",
+		TestFunc: testSendCoinSelectUtxo,
+	},
 }
