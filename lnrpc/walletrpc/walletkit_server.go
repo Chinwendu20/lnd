@@ -184,6 +184,10 @@ var (
 			Entity: "onchain",
 			Action: "write",
 		}},
+		"/walletrpc.WalletKit/Rescan": {{
+			Entity: "onchain",
+			Action: "write",
+		}},
 	}
 
 	// DefaultWalletKitMacFilename is the default name of the wallet kit
