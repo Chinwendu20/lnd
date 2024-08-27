@@ -301,3 +301,12 @@ func (w *WalletController) FetchDerivationInfo(
 
 	return nil, nil
 }
+
+// Rescan scans the blockchain starting from the provided starting block to
+// the end of the longest chain for transactions that pay to the passed
+// addresses and transactions which spend the passed outpoints.
+func (w *WalletController) Rescan(*waddrmgr.BlockStamp, []btcutil.Address,
+	map[wire.OutPoint]btcutil.Address) error {
+
+	return nil
+}
